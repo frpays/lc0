@@ -61,6 +61,7 @@ files += [
   'src/neural/network_mux.cc',
   'src/neural/network_check.cc',
   'src/neural/network_random.cc',
+  'src/neural/network_stream.cc',
   'src/neural/writer.cc',
   'src/selfplay/game.cc',
   'src/selfplay/loop.cc',
