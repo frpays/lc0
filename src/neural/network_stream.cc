@@ -125,23 +125,29 @@ namespace lczero {
     for (int i=0; i<batch_size; i++) {
       network_.Compute(*this, i);
     }
-    condition_.wait(lock);
+    //condition_.wait(lock);
+    condition_.wait(lock, [this]{ return remaining_==0; });
+
   }
   
   void StreamComputation::Receive(int index, std::unique_ptr<NetworkComputation> cmp) {
     std::unique_lock<std::mutex> lock(mutex_);
     peers_[index]=std::move(cmp);
     remaining_--;
-    if (remaining_==0)
-      condition_.notify_one();
+    condition_.notify_one();
   }
   
   
   StreamNetwork::StreamNetwork(const Weights& weights, const OptionsDict& options) {
     OptionsDict blas_options;
-    peer_ = NetworkFactory::Get()->Create("blas", weights, blas_options);
-    
-    int threadCount=6;
+    std::string peer=options.GetOrDefault<std::string>("peer", "blas");
+    bool verbose=options.GetOrDefault<bool>("verbose", true);
+    int threadCount=options.GetOrDefault<int>("threads", 2);
+    peer_ = NetworkFactory::Get()->Create(peer, weights, blas_options);
+
+    if (verbose) {
+      fprintf(stderr, "Creating %d threads for backend <%s>\n", threadCount, peer.c_str());
+    }
     for (int i=0; i<threadCount; i++) {
       threads_.emplace_back(std::thread(&StreamNetwork::ThreadLoop, this));
     }
@@ -188,6 +194,7 @@ namespace lczero {
     condition_.wait(lock, [this]{ return !tasks_.empty(); });
     Task task=std::move(tasks_.front());
     tasks_.pop();
+    condition_.notify_all();
     return task;
   }
   
