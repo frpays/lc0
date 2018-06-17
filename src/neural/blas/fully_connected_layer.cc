@@ -26,9 +26,9 @@
 namespace lczero {
 
 void FullyConnected::Forward(int batch_size, const int input_size,
-                             const int output_size, const float* inputs,
-                             const float* weights, const float* biases,
-                             bool apply_relu, float* outputs) {
+                             const int output_size, SafePtr<const float> inputs,
+                             SafePtr<const float> weights, SafePtr<const float>biases,
+                             bool apply_relu, SafePtr<float> outputs) {
   if (batch_size == 1) {
     
     // Just a matrix-vector multiplication
@@ -44,8 +44,8 @@ void FullyConnected::Forward(int batch_size, const int input_size,
 
     cblas_sgemv(CblasRowMajor, CblasNoTrans,
                 // M     K
-                output_size, input_size, 1.0f, weights, input_size, inputs, 1,
-                0.0f, outputs, 1);
+                output_size, input_size, 1.0f, &weights[0], input_size, &inputs[0], 1,
+                0.0f, &outputs[0], 1);
   } else {
     
     // more columns, matrix-matrix multiplication
@@ -72,11 +72,11 @@ void FullyConnected::Forward(int batch_size, const int input_size,
                 // M              N         K         alpha
                 output_size, batch_size, input_size, 1.0f,
                 // A     lda
-                weights, input_size,
+                &weights[0], input_size,
                 // B    ldb   beta,
-                inputs, input_size, 0.0f,
+                &inputs[0], input_size, 0.0f,
                 // C   ldc
-                outputs, output_size);
+                 &outputs[0], output_size);
   }
   for (int i = 0; i < batch_size; i++) {
     if (apply_relu) {

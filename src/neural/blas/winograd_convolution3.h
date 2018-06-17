@@ -20,6 +20,9 @@
 
 #include <vector>
 
+#include "neural/blas/blas.h"
+
+
 namespace lczero {
 
 // Convolution 3x3 on a 8x8 board using the Winograd algorithm.
@@ -48,17 +51,17 @@ class WinogradConvolution3 {
                        const int max_output_layers);
 
   void Forward(const int batch_size, const int input_channels,
-               const int output_channels, const float* input,
-               const float* weights, float* output);
+               const int output_channels, SafePtr<const float> input,
+               SafePtr<const float> weights, SafePtr<float> output);
 
  private:
-  void TransformIn(const int batch_size, const float* input,
+  void TransformIn(const int batch_size, SafePtr<const float> input,
                    const int channels);
 
-  void Sgemm(const int batch_size, const float* weights,
+  void Sgemm(const int batch_size, SafePtr<const float> weights,
              const int input_channels, const int output_channels);
 
-  void TransformOut(const int batch_size, float* output, const int channels);
+  void TransformOut(const int batch_size, SafePtr<float> output, const int channels);
 
   static constexpr auto kWidth = 8;
   static constexpr auto kHeight = 8;

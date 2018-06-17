@@ -21,6 +21,8 @@
 #include <vector>
 #include <cstddef>
 
+#include "blas.h"
+
 namespace lczero {
 
 class Batchnorm {

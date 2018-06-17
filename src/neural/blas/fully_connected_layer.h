@@ -20,15 +20,17 @@
 
 #include <vector>
 
+#include "blas.h"
+
 namespace lczero {
 
 class FullyConnected {
  public:
   // From input_size to output_size (batched)
   static void Forward(const int batch_size, const int input_size,
-                      const int output_size, const float* input,
-                      const float* weights, const float* biases,
-                      bool apply_relu, float* output);
+                      const int output_size, SafePtr<const float> input,
+                      SafePtr<const float> weights, SafePtr<const float> biases,
+                      bool apply_relu, SafePtr<float>);
 
   // No batched, from input_size to scalar
   static float ToScalar(const int input_size, const float* input,

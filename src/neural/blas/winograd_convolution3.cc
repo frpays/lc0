@@ -88,35 +88,21 @@ std::vector<float> WinogradConvolution3::TransformF(const std::vector<float>& f,
   return U;
 }
 
-WinogradConvolution3::WinogradConvolution3(const int max_batch_size,
-                                           const int max_input_layers,
-                                           const int max_output_layers)
-    : V_(max_batch_size * kWinogradTile * max_input_layers * kTiles),
-      M_(max_batch_size * kWinogradTile * max_output_layers * kTiles) {}
 
-void WinogradConvolution3::Forward(const int batch_size,
-                                   const int input_channels,
-                                   const int output_channels,
-                                   const float* input, const float* weights,
-                                   float* output) {
-  TransformIn(batch_size, input, input_channels);
-  Sgemm(batch_size, weights, input_channels, output_channels);
-  TransformOut(batch_size, output, output_channels);
-}
-
-void WinogradConvolution3::TransformIn(const int batch_size, const float* input,
+void WinogradConvolution3::TransformIn(const int batch_size, SafePtr<const float> input,
                                        const int channels) {
   float x[kWinogradAlpha][kWinogradAlpha];
   float T1[kWinogradAlpha][kWinogradAlpha];
 
+  
   for (auto batch_index = 0; batch_index < batch_size; batch_index++) {
-    const float* input_batch =
+     SafePtr<const float> input_batch =
         input + batch_index * kWidth * kHeight * channels;
     float* V_batch = &V_[channels * kTiles * batch_index];
 
     for (auto channel = 0; channel < channels; channel++) {
       float* V_channel = V_batch + channel;
-      const float* input_channel = input_batch + channel * (kWidth * kHeight);
+      SafePtr<const float>  input_channel = input_batch + channel * (kWidth * kHeight);
 
       for (auto block_y = 0; block_y < kWtiles; block_y++) {
         for (auto block_x = 0; block_x < kWtiles; block_x++) {
@@ -200,7 +186,7 @@ void WinogradConvolution3::TransformIn(const int batch_size, const float* input,
   }
 }
 
-void WinogradConvolution3::Sgemm(const int batch_size, const float* weights,
+void WinogradConvolution3::Sgemm(const int batch_size, SafePtr<const float> weights,
                                  const int input_channels,
                                  const int output_channels) {
 #ifdef USE_MKL
@@ -274,17 +260,17 @@ void WinogradConvolution3::Sgemm(const int batch_size, const float* weights,
 #endif
 }
 
-void WinogradConvolution3::TransformOut(const int batch_size, float* output,
+void WinogradConvolution3::TransformOut(const int batch_size, SafePtr<float> output,
                                         const int channels) {
   float m[kWinogradTile];
 
   for (auto batch_index = 0; batch_index < batch_size; batch_index++) {
     const float* M_batch = &M_[channels * kTiles * batch_index];
-    float* output_batch = output + batch_index * kWidth * kHeight * channels;
+    SafePtr<float> output_batch = output + batch_index * kWidth * kHeight * channels;
 
     for (auto channel = 0; channel < channels; channel++) {
       const float* M_channel = M_batch + channel;
-      float* output_channel = output_batch + channel * (kHeight * kWidth);
+      SafePtr<float> output_channel = output_batch + channel * (kHeight * kWidth);
 
       for (auto block_x = 0; block_x < kWtiles; block_x++) {
         for (auto block_y = 0; block_y < kWtiles; block_y++) {
@@ -331,5 +317,24 @@ void WinogradConvolution3::TransformOut(const int batch_size, float* output,
     }
   }
 }
+  
+  
+  WinogradConvolution3::WinogradConvolution3(const int max_batch_size,
+                                             const int max_input_layers,
+                                             const int max_output_layers)
+  : V_(max_batch_size * kWinogradTile * max_input_layers * kTiles),
+  M_(max_batch_size * kWinogradTile * max_output_layers * kTiles) {}
+  
+  void WinogradConvolution3::Forward(const int batch_size,
+                                     const int input_channels,
+                                     const int output_channels,
+                                     SafePtr<const float> input, SafePtr<const float> weights,
+                                     SafePtr<float> output) {
+    TransformIn(batch_size, input, input_channels);
+    Sgemm(batch_size, weights, input_channels, output_channels);
+    TransformOut(batch_size, output, output_channels);
+  }
+  
+  
 
 }  // namespace lczero
