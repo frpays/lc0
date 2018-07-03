@@ -29,7 +29,6 @@ if cc.get_id() == 'clang' or cc.get_id() == 'gcc'
 
   if get_option('buildtype') == 'release'
     add_project_arguments('-march=native', language : 'cpp')
-    add_project_arguments('-mtune=native', language : 'cpp')
   endif
 endif
 
@@ -46,8 +45,6 @@ has_backends = false
 #############################################################################
 files += [
   'src/engine.cc',
-  'src/analyzer/analyzer.cc',
-  'src/analyzer/table.cc',
   'src/chess/bitboard.cc',
   'src/chess/board.cc',
   'src/chess/position.cc',
@@ -136,31 +133,40 @@ if get_option('build_backends')
   mkl_libdirs = get_option('mkl_libdirs')
   mkl_lib = cc.find_library('mkl_rt', dirs: mkl_libdirs, required: false)
 
-  openblas_lib = cc.find_library('openblas', required: false)
+  openblas_libdirs = get_option('openblas_libdirs')
+  openblas_lib = cc.find_library('openblas.dll', dirs: openblas_libdirs, required: false)
+  if not openblas_lib.found()
+    openblas_lib = cc.find_library('openblas', dirs: openblas_libdirs, required: false)
+  endif
 
-  if mkl_lib.found() 
-    add_project_arguments('-DUSE_MKL', language : 'cpp')
-    includes += include_directories(get_option('mkl_include'))
-    deps += [ mkl_lib ]
-    has_blas = true
+  if get_option('blas') or get_option('opencl')
+    if get_option('mkl') and mkl_lib.found()
+      add_project_arguments('-DUSE_MKL', language : 'cpp')
+      includes += include_directories(get_option('mkl_include'))
+      deps += [ mkl_lib ]
+      has_blas = true
 
-  elif accelerate_lib.found()
-    includes += include_directories('/System/Library/Frameworks/Accelerate.framework/Frameworks/vecLib.framework/Headers')
-    deps += [ accelerate_lib ]
-    has_blas = true
+    elif get_option('accelerate') and accelerate_lib.found()
+      includes += include_directories('/System/Library/Frameworks/Accelerate.framework/Frameworks/vecLib.framework/Headers')
+      deps += [ accelerate_lib ]
+      has_blas = true
 
-  elif openblas_lib.found() 
-    add_project_arguments('-DUSE_OPENBLAS', language : 'cpp')
-    includes += include_directories(get_option('openblas_include'))
-    deps += [ openblas_lib ]
-    has_blas = true
+    elif get_option('openblas') and openblas_lib.found()
+      add_project_arguments('-DUSE_OPENBLAS', language : 'cpp')
+      includes += include_directories(get_option('openblas_include'))
+      deps += [ openblas_lib ]
+      has_blas = true
 
+    endif
   endif
 
   if get_option('blas') and has_blas
 
     blas_files = [
-    'src/neural/BLAS/transforms.cc',
+    'src/neural/blas/batchnorm.cc',
+    'src/neural/blas/convolution1.cc',
+    'src/neural/blas/fully_connected_layer.cc',
+    'src/neural/blas/winograd_convolution3.cc',
     'src/neural/network_blas.cc'
     ]
 
@@ -190,22 +196,27 @@ if get_option('build_backends')
       has_opencl = true
 
   endif
-  
 
-  if get_option('opencl') and has_opencl and has_blas
 
-    opencl_files = [
-    'src/neural/CL/OpenCL.cc',
-    'src/neural/CL/OpenCLTuner.cc',
-    'src/neural/network_opencl.cc',
-    ]
+  if get_option('opencl') and has_opencl
 
-    if not get_option('blas')
-      opencl_files += 'src/neural/transforms.cc'
+    if has_blas
+      opencl_files = [
+      'src/neural/opencl/OpenCL.cc',
+      'src/neural/opencl/OpenCLTuner.cc',
+      'src/neural/network_opencl.cc',
+      ]
+
+      if not get_option('blas')
+        opencl_files += 'src/neural/blas/transforms.cc'
+      endif
+
+      includes += include_directories(get_option('opencl_include'))
+      files += opencl_files
+      has_backends = true
+    else
+      warning('The OpenCL backend requires a BLAS library')
     endif
-
-    files += opencl_files
-    has_backends = true
 
   endif
 
@@ -256,7 +267,7 @@ endif # if get_option('build_backends')
 if not has_backends and get_option('build_backends')
   error('''
 
-        No usable computation backends (cudnn/tensorflow/etc) are found. 
+        No usable computation backends (cudnn/tensorflow/etc) are found.
         If you want to build it with random only backend, pass
         -D build_backends=false to a meson build.''')
 endif

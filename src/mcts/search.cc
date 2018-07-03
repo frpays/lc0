@@ -45,10 +45,11 @@ const char* Search::kVirtualLossBugStr = "Virtual loss bug";
 const char* Search::kFpuReductionStr = "First Play Urgency Reduction";
 const char* Search::kCacheHistoryLengthStr =
     "Length of history to include in cache";
-const char* Search::kExtraVirtualLossStr = "Extra virtual loss";
 const char* Search::kPolicySoftmaxTempStr = "Policy softmax temperature";
 const char* Search::kAllowedNodeCollisionsStr =
     "Allowed node collisions, per batch";
+const char* Search::kBackPropagateBetaStr = "Backpropagation gamma";
+const char* Search::kBackPropagateGammaStr = "Backpropagation beta";
 
 namespace {
 const int kSmartPruningToleranceNodes = 100;
@@ -59,7 +60,7 @@ const int kUciInfoMinimumFrequencyMs = 5000;
 
 void Search::PopulateUciParams(OptionsParser* options) {
   // Here the "safe defaults" are listed.
-  // Many of them are overriden with optimized defaults in engine.cc and
+  // Many of them are overridden with optimized defaults in engine.cc and
   // tournament.cc
 
   options->Add<IntOption>(kMiniBatchSizeStr, 1, 1024, "minibatch-size") = 1;
@@ -77,12 +78,14 @@ void Search::PopulateUciParams(OptionsParser* options) {
                             "fpu-reduction") = 0.0f;
   options->Add<IntOption>(kCacheHistoryLengthStr, 0, 7,
                           "cache-history-length") = 7;
-  options->Add<FloatOption>(kExtraVirtualLossStr, 0.0f, 100.0f,
-                            "extra-virtual-loss") = 0.0f;
   options->Add<FloatOption>(kPolicySoftmaxTempStr, 0.1f, 10.0f,
                             "policy-softmax-temp") = 1.0f;
   options->Add<IntOption>(kAllowedNodeCollisionsStr, 0, 1024,
                           "allowed-node-collisions") = 0;
+  options->Add<FloatOption>(kBackPropagateBetaStr, 0.0f, 100.0f,
+                            "backpropagate-beta") = 1.0f;
+  options->Add<FloatOption>(kBackPropagateGammaStr, -100.0f, 100.0f,
+                            "backpropagate-gamma") = 1.0f;
 }
 
 Search::Search(const NodeTree& tree, Network* network,
@@ -109,9 +112,10 @@ Search::Search(const NodeTree& tree, Network* network,
       kVirtualLossBug(options.Get<float>(kVirtualLossBugStr)),
       kFpuReduction(options.Get<float>(kFpuReductionStr)),
       kCacheHistoryLength(options.Get<int>(kCacheHistoryLengthStr)),
-      kExtraVirtualLoss(options.Get<float>(kExtraVirtualLossStr)),
       kPolicySoftmaxTemp(options.Get<float>(kPolicySoftmaxTempStr)),
-      kAllowedNodeCollisions(options.Get<int>(kAllowedNodeCollisionsStr)) {}
+      kAllowedNodeCollisions(options.Get<int>(kAllowedNodeCollisionsStr)),
+      kBackPropagateBeta(options.Get<float>(kBackPropagateBetaStr)),
+      kBackPropagateGamma(options.Get<float>(kBackPropagateGammaStr)) {}
 
 namespace {
 void ApplyDirichletNoise(Node* node, float eps, double alpha) {
@@ -133,48 +137,6 @@ void ApplyDirichletNoise(Node* node, float eps, double alpha) {
     child->SetP(child->GetP() * (1 - eps) + eps * noise[noise_idx++] / total);
   }
 }
-
-// Returns a child with most visits.
-Node* GetBestChild(Node* parent) {
-  Node* best_node = nullptr;
-  // Best child is selected using the following criteria:
-  // * Largest number of playouts.
-  // * If two nodes have equal number:
-  //   * If that number is 0, the one with larger prior wins.
-  //   * If that number is larger than 0, the one wil larger eval wins.
-  std::tuple<int, float, float> best(-1, 0.0, 0.0);
-  for (Node* node : parent->Children()) {
-    std::tuple<int, float, float> val(node->GetN(), node->GetQ(-10.0, 0.0),
-                                      node->GetP());
-    if (val > best) {
-      best = val;
-      best_node = node;
-    }
-  }
-  return best_node;
-}
-
-Node* GetBestChildWithTemperature(Node* parent, float temperature) {
-  std::vector<float> cumulative_sums;
-  float sum = 0.0;
-  const float n_parent = parent->GetN();
-
-  for (Node* node : parent->Children()) {
-    sum += std::pow(node->GetN() / n_parent, 1 / temperature);
-    cumulative_sums.push_back(sum);
-  }
-
-  float toss = Random::Get().GetFloat(cumulative_sums.back());
-  int idx =
-      std::lower_bound(cumulative_sums.begin(), cumulative_sums.end(), toss) -
-      cumulative_sums.begin();
-
-  for (Node* node : parent->Children()) {
-    if (idx-- == 0) return node;
-  }
-  assert(false);
-  return nullptr;
-}
 }  // namespace
 
 void Search::SendUciInfo() REQUIRES(nodes_mutex_) {
@@ -188,13 +150,12 @@ void Search::SendUciInfo() REQUIRES(nodes_mutex_) {
       cache_->GetSize() * 1000LL / std::max(cache_->GetCapacity(), 1);
   uci_info_.nps =
       uci_info_.time ? (total_playouts_ * 1000 / uci_info_.time) : 0;
-  uci_info_.score =
-      290.680623072 * tan(1.548090806 * best_move_node_->GetQ(0, 0));
+  uci_info_.score = 290.680623072 * tan(1.548090806 * best_move_node_->GetQ(0));
   uci_info_.pv.clear();
 
   bool flip = played_history_.IsBlackToMove();
   for (Node* iter = best_move_node_; iter;
-       iter = GetBestChild(iter), flip = !flip) {
+       iter = GetBestChildNoTemperature(iter), flip = !flip) {
     uci_info_.pv.push_back(iter->GetMove(flip));
   }
   uci_info_.comment.clear();
@@ -224,45 +185,78 @@ int64_t Search::GetTimeSinceStart() const {
 void Search::SendMovesStats() const {
   std::vector<const Node*> nodes;
   const float parent_q =
-      -root_node_->GetQ(0, 0) -
+      -root_node_->GetQ(0) -
       kFpuReduction * std::sqrt(root_node_->GetVisitedPolicy());
+  const float U_coeff =
+      kCpuct * std::sqrt(std::max(root_node_->GetChildrenVisits(), 1u));
+
   for (Node* child : root_node_->Children()) {
     nodes.emplace_back(child);
   }
   std::sort(nodes.begin(), nodes.end(),
-            [](const Node* a, const Node* b) { return a->GetN() < b->GetN(); });
+           [&parent_q, &U_coeff](const Node* a, const Node* b) {
+             return
+                 std::forward_as_tuple(a->GetN(), a->GetQ(parent_q) + U_coeff * a->GetU())
+               < std::forward_as_tuple(b->GetN(), b->GetQ(parent_q) + U_coeff * b->GetU());
+           });
 
   const bool is_black_to_move = played_history_.IsBlackToMove();
   ThinkingInfo info;
   for (const Node* node : nodes) {
     std::ostringstream oss;
     oss << std::fixed;
+
     oss << std::left << std::setw(5)
         << node->GetMove(is_black_to_move).as_string();
+
     oss << " (" << std::setw(4) << node->GetMove().as_nn_index() << ")";
-    oss << " N: ";
-    oss << std::right << std::setw(7) << node->GetN() << " (+" << std::setw(2)
-        << node->GetNInFlight() << ") ";
-    oss << "(V: " << std::setw(6) << std::setprecision(2) << node->GetV() * 100
-        << "%) ";
+
+    oss << " N: " << std::right << std::setw(7) << node->GetN() << " (+"
+        << std::setw(2) << node->GetNInFlight() << ") ";
+
     oss << "(P: " << std::setw(5) << std::setprecision(2) << node->GetP() * 100
         << "%) ";
+
     oss << "(Q: " << std::setw(8) << std::setprecision(5)
-        << node->GetQ(parent_q, 0) << ") ";
+        << node->GetQ(parent_q) << ") ";
+
     oss << "(U: " << std::setw(6) << std::setprecision(5)
-        << node->GetU() * kCpuct *
-               std::sqrt(std::max(node->GetParent()->GetChildrenVisits(), 1u))
-        << ") ";
+        << U_coeff * node->GetU() << ") ";
 
     oss << "(Q+U: " << std::setw(8) << std::setprecision(5)
-        << node->GetQ(parent_q, 0) +
-               node->GetU() * kCpuct *
-                   std::sqrt(
-                       std::max(node->GetParent()->GetChildrenVisits(), 1u))
-        << ") ";
+        << node->GetQ(parent_q) + U_coeff * node->GetU() << ") ";
+
+    oss << "(V: ";
+    optional<float> v;
+    if (node->IsTerminal()) {
+      v = node->GetTerminalNodeValue();
+    } else {
+      NNCacheLock nneval = GetCachedFirstPlyResult(node);
+      if (nneval) v = -nneval->q;
+    }
+    if (v) {
+      oss << std::setw(7) << std::setprecision(4) << *v;
+    } else {
+      oss << " -.----";
+    }
+    oss << ") ";
+
     info.comment = oss.str();
     info_callback_(info);
   }
+}
+
+NNCacheLock Search::GetCachedFirstPlyResult(const Node* node) const {
+  assert(node->GetParent() == root_node_);
+  // It would be relatively straightforward to generalize this to fetch NN
+  // results for an abitrary move.
+  optional<float> retval;
+  PositionHistory history(played_history_); // Is it worth it to move this
+  // initialization to SendMoveStats, reducing n memcpys to 1? Probably not.
+  history.Append(node->GetMove());
+  auto hash = history.HashLast(kCacheHistoryLength + 1);
+  NNCacheLock nneval(cache_, hash);
+  return nneval;
 }
 
 void Search::MaybeTriggerStop() {
@@ -338,12 +332,25 @@ void Search::UpdateRemainingMoves() {
   if (remaining_playouts_ <= 1) remaining_playouts_ = 1;
 }
 
+// Return the evaluation of the actual best child, regardless of temperature
+// settings. This differs from GetBestMove, which does obey any temperature
+// settings. So, somethimes, they may return results of different moves.
+float Search::GetBestEval() const {
+  SharedMutex::SharedLock lock(nodes_mutex_);
+  Mutex::Lock counters_lock(counters_mutex_);
+  float parent_q = -root_node_->GetQ(0);
+  if (!root_node_->HasChildren()) return parent_q;
+  Node* best_node = GetBestChildNoTemperature(root_node_);
+  return best_node->GetQ(parent_q);
+}
+
 std::pair<Move, Move> Search::GetBestMove() const {
   SharedMutex::SharedLock lock(nodes_mutex_);
   Mutex::Lock counters_lock(counters_mutex_);
   return GetBestMoveInternal();
 }
 
+// Returns the best move, maybe with temperature (according to the settings).
 std::pair<Move, Move> Search::GetBestMoveInternal() const
     REQUIRES_SHARED(nodes_mutex_) REQUIRES_SHARED(counters_mutex_) {
   if (responded_bestmove_) return best_move_;
@@ -362,11 +369,70 @@ std::pair<Move, Move> Search::GetBestMoveInternal() const
 
   Node* best_node = temperature && root_node_->GetN() > 1
                         ? GetBestChildWithTemperature(root_node_, temperature)
-                        : GetBestChild(root_node_);
+                        : GetBestChildNoTemperature(root_node_);
 
   Move ponder_move;  // Default is "null move" which means "don't display
                      // anything".
   return {best_node->GetMove(played_history_.IsBlackToMove()), ponder_move};
+}
+
+// Returns a child with most visits.
+Node* Search::GetBestChildNoTemperature(Node* parent) const {
+  Node* best_node = nullptr;
+  // Best child is selected using the following criteria:
+  // * Largest number of playouts.
+  // * If two nodes have equal number:
+  //   * If that number is 0, the one with larger prior wins.
+  //   * If that number is larger than 0, the one with larger eval wins.
+  std::tuple<int, float, float> best(-1, 0.0, 0.0);
+  for (Node* node : parent->Children()) {
+    if (parent == root_node_ && !limits_.searchmoves.empty() &&
+        std::find(limits_.searchmoves.begin(), limits_.searchmoves.end(),
+                  node->GetMove()) == limits_.searchmoves.end()) {
+      continue;
+    }
+    std::tuple<int, float, float> val(node->GetN(), node->GetQ(-10.0),
+                                      node->GetP());
+    if (val > best) {
+      best = val;
+      best_node = node;
+    }
+  }
+  return best_node;
+}
+
+// Returns a child chosen according to weighted-by-temperature visit count.
+Node* Search::GetBestChildWithTemperature(Node* parent,
+                                          float temperature) const {
+  std::vector<float> cumulative_sums;
+  float sum = 0.0;
+  const float n_parent = parent->GetN();
+
+  for (Node* node : parent->Children()) {
+    if (parent == root_node_ && !limits_.searchmoves.empty() &&
+        std::find(limits_.searchmoves.begin(), limits_.searchmoves.end(),
+                  node->GetMove()) == limits_.searchmoves.end()) {
+      continue;
+    }
+    sum += std::pow(node->GetN() / n_parent, 1 / temperature);
+    cumulative_sums.push_back(sum);
+  }
+
+  float toss = Random::Get().GetFloat(cumulative_sums.back());
+  int idx =
+      std::lower_bound(cumulative_sums.begin(), cumulative_sums.end(), toss) -
+      cumulative_sums.begin();
+
+  for (Node* node : parent->Children()) {
+    if (parent == root_node_ && !limits_.searchmoves.empty() &&
+        std::find(limits_.searchmoves.begin(), limits_.searchmoves.end(),
+                  node->GetMove()) == limits_.searchmoves.end()) {
+      continue;
+    }
+    if (idx-- == 0) return node;
+  }
+  assert(false);
+  return nullptr;
 }
 
 void Search::StartThreads(size_t how_many) {
@@ -434,13 +500,13 @@ void SearchWorker::ExecuteOneIteration() {
   // 4. Run NN computation.
   RunNNComputation();
 
-  // 5. Populate computed nodes with results of the NN computation.
-  FetchNNResults();
+  // 5. Retrieve NN computations (and terminal values) into nodes.
+  FetchMinibatchResults();
 
-  // 6. Update nodes.
+  // 6. Propagate the new nodes' information to all their parents in the tree.
   DoBackupUpdate();
 
-  // 7. Update status/counters.
+  // 7. Update the Search's status and progress information.
   UpdateCounters();
 }
 
@@ -484,7 +550,7 @@ void SearchWorker::GatherMinibatch() {
     // of the game), it means that we already visited this node before.
     if (node->IsTerminal()) continue;
 
-    // Node was never visited, extending.
+    // Node was never visited, extend it.
     ExtendNode(node);
 
     // Only send non-terminal nodes to neural network
@@ -519,7 +585,7 @@ SearchWorker::NodeToProcess SearchWorker::PickNodeToExtend() {
     {
       SharedMutex::Lock lock(search_->nodes_mutex_);
       // n_in_flight_ is incremented. If the method returns false, then there is
-      // a search collision, and this node is alredy being expanded.
+      // a search collision, and this node is already being expanded.
       if (!node->TryStartScoreUpdate()) return {node, true};
       // Unexamined leaf node. We've hit the end of this playout.
       if (!node->HasChildren()) return {node, false};
@@ -534,8 +600,8 @@ SearchWorker::NodeToProcess SearchWorker::PickNodeToExtend() {
     int possible_moves = 0;
     float parent_q =
         (is_root_node && search_->kNoise)
-            ? -node->GetQ(0, search_->kExtraVirtualLoss)
-            : -node->GetQ(0, search_->kExtraVirtualLoss) -
+            ? -node->GetQ(0)
+            : -node->GetQ(0) -
                   search_->kFpuReduction * std::sqrt(node->GetVisitedPolicy());
     for (Node* child : node->Children()) {
       if (is_root_node) {
@@ -549,9 +615,16 @@ SearchWorker::NodeToProcess SearchWorker::PickNodeToExtend() {
                 best_node_n - static_cast<int>(child->GetN())) {
           continue;
         }
+        // If searchmoves was sent, restrict the search only in that moves
+        if (!search_->limits_.searchmoves.empty() &&
+            std::find(search_->limits_.searchmoves.begin(),
+                      search_->limits_.searchmoves.end(),
+                      child->GetMove()) == search_->limits_.searchmoves.end()) {
+          continue;
+        }
         ++possible_moves;
       }
-      float Q = child->GetQ(parent_q, search_->kExtraVirtualLoss);
+      float Q = child->GetQ(parent_q);
       if (search_->kVirtualLossBug && child->GetN() == 0) {
         Q = (Q * child->GetParent()->GetN() - search_->kVirtualLossBug) /
             (child->GetParent()->GetN() + std::fabs(search_->kVirtualLossBug));
@@ -681,8 +754,10 @@ int SearchWorker::PrefetchIntoCache(Node* node, int budget) {
     return 1;
   }
 
-  // If it's a node in process of expansion or is terminal, don't prefetch it.
-  if (!node->HasChildren()) return 0;
+  // n = 0 and n_in_flight_ > 0, that means the node is being extended.
+  if (node->GetN() == 0) return 0;
+  // The node is terminal; don't prefetch it.
+  if (node->IsTerminal()) return 0;
 
   // Populate all subnodes and their scores.
   typedef std::pair<float, Node*> ScoredNode;
@@ -690,12 +765,11 @@ int SearchWorker::PrefetchIntoCache(Node* node, int budget) {
   float puct_mult =
       search_->kCpuct * std::sqrt(std::max(node->GetChildrenVisits(), 1u));
   // FPU reduction is not taken into account.
-  const float parent_q = -node->GetQ(0, search_->kExtraVirtualLoss);
+  const float parent_q = -node->GetQ(0);
   for (Node* child : node->Children()) {
     if (child->GetP() == 0.0f) continue;
     // Flip the sign of a score to be able to easily sort.
-    scores.emplace_back(-puct_mult * child->GetU() -
-                            child->GetQ(parent_q, search_->kExtraVirtualLoss),
+    scores.emplace_back(-puct_mult * child->GetU() - child->GetQ(parent_q),
                         child);
   }
 
@@ -722,12 +796,12 @@ int SearchWorker::PrefetchIntoCache(Node* node, int budget) {
     if (i != scores.size() - 1) {
       // Sign of the score was flipped for sorting, so flip it back.
       const float next_score = -scores[i + 1].first;
-      const float q = n->GetQ(-parent_q, search_->kExtraVirtualLoss);
+      const float q = n->GetQ(-parent_q);
       if (next_score > q) {
         budget_to_spend = std::min(
             budget,
-            int(n->GetP() * puct_mult / (next_score - q) - n->GetNStarted())
-                + 1);
+            int(n->GetP() * puct_mult / (next_score - q) - n->GetNStarted()) +
+                1);
       } else {
         budget_to_spend = budget;
       }
@@ -749,19 +823,23 @@ void SearchWorker::RunNNComputation() {
   if (computation_->GetBatchSize() != 0) computation_->ComputeBlocking();
 }
 
-// 5. Populate computed nodes with results of the NN computation.
+// 5. Retrieve NN computations (and terminal values) into nodes.
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-void SearchWorker::FetchNNResults() {
-  if (computation_->GetBatchSize() == 0) return;
-
-  // Copy NN results into nodes.
+void SearchWorker::FetchMinibatchResults() {
+  // Populate NN/cached results, or terminal results, into nodes.
   int idx_in_computation = 0;
   for (auto& node_to_process : nodes_to_process_) {
-    if (!node_to_process.nn_queried) continue;
     Node* node = node_to_process.node;
-    // Populate Q value.
-    node->SetV(-computation_->GetQVal(idx_in_computation));
-    // Populate P values.
+    if (!node_to_process.nn_queried) {
+      // Terminal nodes don't involve the neural NetworkComputation, nor do
+      // they require any further processing after value retrieval.
+      node_to_process.v = node->GetTerminalNodeValue();
+      continue;
+    }
+    // For NN results, we need to populate policy as well as value.
+    // First the value...
+    node_to_process.v = -computation_->GetQVal(idx_in_computation);
+    // ...and secondly, the policy data.
     float total = 0.0;
     for (Node* n : node->Children()) {
       float p =
@@ -772,7 +850,7 @@ void SearchWorker::FetchNNResults() {
       total += p;
       n->SetP(p);
     }
-    // Scale P values to add up to 1.0.
+    // Normalize P values to add up to 1.0.
     if (total > 0.0f) {
       float scale = 1.0f / total;
       for (Node* n : node->Children()) n->SetP(n->GetP() * scale);
@@ -785,7 +863,7 @@ void SearchWorker::FetchNNResults() {
   }
 }
 
-// 6. Update nodes.
+// 6. Propagate the new nodes' information to all their parents in the tree.
 // ~~~~~~~~~~~~~~
 void SearchWorker::DoBackupUpdate() {
   // Update nodes.
@@ -801,8 +879,8 @@ void SearchWorker::DoBackupUpdate() {
       continue;
     }
 
-    // Backup V value up to a root.
-    float v = node->GetV();
+    // Backup V value up to a root. After 1 visit, V = Q.
+    float v = node_to_process.v;
     // Maximum depth the node is explored.
     uint16_t depth = 0;
     // If the node is terminal, mark it as fully explored to an "infinite"
@@ -812,7 +890,8 @@ void SearchWorker::DoBackupUpdate() {
     for (Node* n = node; n != search_->root_node_->GetParent();
          n = n->GetParent()) {
       ++depth;
-      n->FinalizeScoreUpdate(v);
+      n->FinalizeScoreUpdate(v, search_->kBackPropagateGamma,
+                             search_->kBackPropagateBeta);
       // Q will be flipped for opponent.
       v = -v;
 
@@ -834,10 +913,10 @@ void SearchWorker::DoBackupUpdate() {
   }
 }
 
-// 7. UpdateCounters()
+// 7. Update the Search's status and progress information.
 //~~~~~~~~~~~~~~~~~~~~
 void SearchWorker::UpdateCounters() {
-  search_->UpdateRemainingMoves(); // Updates smart pruning counters.
+  search_->UpdateRemainingMoves();  // Updates smart pruning counters.
   search_->MaybeOutputInfo();
   search_->MaybeTriggerStop();
 
