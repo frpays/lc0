@@ -80,7 +80,7 @@ option('openblas',
 
 option('mkl',
        type: 'boolean',
-       value: true,
+       value: false,
        description: 'Enable MKL BLAS support')
 
 option('accelerate',

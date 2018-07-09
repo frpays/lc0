@@ -210,6 +210,7 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
                 MBuffer, conv_weights, nullptr, bn_weights, skip_in_trans,
                 skip_next_in_trans, true, batch_size);
       queue.flush();
+      queue.finish();
       profiler.Step(NetworkStepFirstConvolve3);
       
       skip_in_trans = skip_next_in_trans;
@@ -224,6 +225,7 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
                 MBuffer, conv1_weights, nullptr, bn1_weights, skip_in_trans,
                 true, false, batch_size);
       queue.flush();
+      queue.finish();
       profiler.Step(NetworkStepResConvolve3_1);
 
       auto skip_next_in_trans = false;
@@ -234,7 +236,9 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
                 MBuffer, conv2_weights, &inBuffer, bn2_weights, true,
                 skip_next_in_trans, true, batch_size);
       queue.flush();
-  profiler.Step(NetworkStepResConvolve3_2);
+      queue.finish();
+      profiler.Step(NetworkStepResConvolve3_2);
+      
       skip_in_trans = skip_next_in_trans;
     } else {
       assert(layer.is_value || layer.is_policy);
@@ -251,13 +255,16 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
 
       convolve1(layer.channels, layer.outputs, inBuffer, inBuffer2, VBuffer,
                 begin(layer.weights), batch_size);
-      profiler.Step(layer.is_value ? NetworkStepConvolveV1 : NetworkStepConvolveP1);
+      queue.flush();
+      queue.finish();
+       profiler.Step(layer.is_value ? NetworkStepConvolveV1 : NetworkStepConvolveP1);
 
       innerproduct(inBuffer2, ip_w, ip_b, out_buffer, layer.ip_in_size,
                    layer.ip_out_size, layer.is_value, batch_size);
       
       queue.flush();
-      profiler.Step(layer.is_value ? NetworkStepInneproductV1 :NetworkStepInneproductP1);
+      queue.finish();
+     profiler.Step(layer.is_value ? NetworkStepInneproductV1 :NetworkStepInneproductP1);
     }
 
   }
