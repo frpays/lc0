@@ -165,7 +165,7 @@ class CheckComputation : public NetworkComputation {
       fprintf(stderr, "Absolute error histogram for batch %d:\n", i);
       histogram.Dump();
       
-      fprintf(stderr, "histogram 1 for a batch of %d:\n", i);
+      fprintf(stderr, "histogram A for a batch of %d:\n", i);
       histogramA.Dump();
       
       fprintf(stderr, "histogram B for a batch of %d:\n", i);
