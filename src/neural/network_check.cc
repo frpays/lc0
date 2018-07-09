@@ -140,21 +140,38 @@ class CheckComputation : public NetworkComputation {
   }
 
   void DisplayHistogram() {
-    Histogram histogram(-15, 1, 5);
 
     int size = GetBatchSize();
     for (int i = 0; i < size; i++) {
+      
+      Histogram histogram(-15, 1, 5);
+      Histogram histogramA(-10, 6, 5);
+      Histogram histogramB(-10, 6, 5);
+
       float qv1 = refComp_->GetQVal(i);
       float qv2 = checkComp_->GetQVal(i);
       histogram.Add(qv2 - qv1);
+      histogramA.Add(qv1);
+      histogramB.Add(qv2);
+
       for (int j = 0; j < kNumOutputPolicies; j++) {
         float pv1 = refComp_->GetPVal(i, j);
         float pv2 = checkComp_->GetPVal(i, j);
         histogram.Add(pv2 - pv1);
+        histogramA.Add(pv1);
+        histogramB.Add(pv2);
       }
+      
+      fprintf(stderr, "Absolute error histogram for batch %d:\n", i);
+      histogram.Dump();
+      
+      fprintf(stderr, "histogram 1 for a batch of %d:\n", i);
+      histogramA.Dump();
+      
+      fprintf(stderr, "histogram B for a batch of %d:\n", i);
+      histogramB.Dump();
     }
-    fprintf(stderr, "Absolute error histogram for a batch of %d:\n", size);
-    histogram.Dump();
+ 
   }
 
   // Compute maximum absolute/relative errors
