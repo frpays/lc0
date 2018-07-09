@@ -30,6 +30,7 @@
 #include <string>
 #include <thread>
 
+#include "neural/network_profiler.h"
 #include "neural/opencl/OpenCL.h"
 #include "neural/opencl/OpenCLParams.h"
 #include "neural/opencl/OpenCLTuner.h"
@@ -122,7 +123,9 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
                              std::vector<net_t>& output_pol,
                              std::vector<net_t>& output_val,
                              const int batch_size) const {
-  
+  NetworkProfiler profiler;
+  profiler.Start(batch_size);
+
   constexpr auto tiles = WINOGRAD_P;
 
   auto finalSize_pol =
@@ -176,6 +179,8 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
 
     opencl_thread_data.m_buffers_allocated = true;
   }
+  
+
 
   cl::Buffer& inBuffer = opencl_thread_data.m_inBuffer;
   cl::Buffer& inBuffer2 = opencl_thread_data.m_inBuffer2;
@@ -185,6 +190,8 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
 
   const auto inSize = sizeof(net_t) * input.size();
   queue.enqueueWriteBuffer(inBuffer, CL_FALSE, 0, inSize, input.data());
+
+  profiler.Step(NetworkStepInit);
 
   auto skip_in_trans = false;
   for (auto iter = cbegin(m_layers); iter != cend(m_layers); iter++) {
@@ -202,6 +209,8 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
       convolve3(layer.channels, layer.outputs, inBuffer, inBuffer, VBuffer,
                 MBuffer, conv_weights, nullptr, bn_weights, skip_in_trans,
                 skip_next_in_trans, true, batch_size);
+      profiler.Step(NetworkStepFirstConvolve3);
+      
       skip_in_trans = skip_next_in_trans;
     } else if (layer.is_residual_block) {
       assert(layer.channels == layer.outputs);
@@ -213,6 +222,7 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
       convolve3(layer.channels, layer.outputs, inBuffer, inBuffer2, VBuffer,
                 MBuffer, conv1_weights, nullptr, bn1_weights, skip_in_trans,
                 true, false, batch_size);
+      profiler.Step(NetworkStepResConvolve3);
 
       auto skip_next_in_trans = false;
       if (niter->is_residual_block) {
@@ -221,6 +231,7 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
       convolve3(layer.channels, layer.outputs, inBuffer2, inBuffer, VBuffer,
                 MBuffer, conv2_weights, &inBuffer, bn2_weights, true,
                 skip_next_in_trans, true, batch_size);
+      profiler.Step(NetworkStepResConvolve3);
       skip_in_trans = skip_next_in_trans;
     } else {
       assert(layer.is_value || layer.is_policy);
@@ -237,33 +248,55 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
 
       convolve1(layer.channels, layer.outputs, inBuffer, inBuffer2, VBuffer,
                 begin(layer.weights), batch_size);
+      profiler.Step(layer.is_value ? NetworkStepConvolveV1 : NetworkStepConvolveP1);
 
       innerproduct(inBuffer2, ip_w, ip_b, out_buffer, layer.ip_in_size,
                    layer.ip_out_size, layer.is_value, batch_size);
+      
+      profiler.Step(layer.is_value ? NetworkStepInneproductV1 :NetworkStepInneproductP1);
     }
+
   }
+  profiler.Step(NetworkStepEnd);
 
   auto pinnedOutBufferHost_pol =
       queue.enqueueMapBuffer(opencl_thread_data.m_pinnedOutBuffer_pol, CL_FALSE,
                              CL_MAP_READ, 0, batch_size * finalSize_pol);
+  profiler.Step(NetworkStepEnd3);
+
   auto pinnedOutBufferHost_val =
       queue.enqueueMapBuffer(opencl_thread_data.m_pinnedOutBuffer_val, CL_FALSE,
                              CL_MAP_READ, 0, batch_size * finalSize_val);
 
+  profiler.Step(NetworkStepEnd4);
+  /*
   {
     // Finish call is usually a busy wait. When using multiple threads
     // use the lock to avoid busy waiting with all threads.
     std::lock_guard<std::mutex> lock(m_queue_finish_mutex);
-    queue.finish();
-  }
+    profiler.Step(NetworkStepEnd5);
+   queue.finish();
+    profiler.Step(NetworkStepEnd6);
+ }
+   */
 
   std::memcpy(output_pol.data(), pinnedOutBufferHost_pol, batch_size * finalSize_pol);
+  profiler.Step(NetworkStepEnd7);
   std::memcpy(output_val.data(), pinnedOutBufferHost_val, batch_size * finalSize_val);
+  profiler.Step(NetworkStepEnd8);
 
   queue.enqueueUnmapMemObject(opencl_thread_data.m_pinnedOutBuffer_pol,
                               pinnedOutBufferHost_pol);
+  profiler.Step(NetworkStepEnd9);
   queue.enqueueUnmapMemObject(opencl_thread_data.m_pinnedOutBuffer_val,
                               pinnedOutBufferHost_val);
+  
+  
+  
+  profiler.Step(NetworkStepEnd2);
+  
+  profiler.Dump();
+  
 }
 
 void OpenCL_Network::convolve3(int channels, int outputs, cl::Buffer& bufferIn,
