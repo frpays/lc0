@@ -33,12 +33,13 @@
    "End7",
    "End8",
    "End9",
-   
-   "Encoding",
-   "Forward",
 
    "WinogradTransformIn",
    "WinogradTransformSgemm",
    "WinogradTransformOut",
+
+   "Encoding",
+   "Forward",
+
 };
 
