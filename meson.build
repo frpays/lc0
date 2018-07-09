@@ -67,6 +67,7 @@ files += [
   'src/utils/commandline.cc',
   'src/utils/optionsdict.cc',
   'src/utils/optionsparser.cc',
+  'src/utils/histogram.cc',
   'src/utils/random.cc',
   'src/utils/string.cc',
   'src/utils/transpose.cc',
