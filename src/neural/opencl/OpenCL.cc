@@ -291,7 +291,7 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
   
   profiler.Step(NetworkStepEnd2);
   
-//  profiler.Dump();
+  profiler.Dump();
   
 }
 

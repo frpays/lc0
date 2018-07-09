@@ -132,7 +132,7 @@ class OpenCLComputation : public NetworkComputation {
       profiler.Step(NetworkStepEnd);
     }
     
-    profiler.Dump();
+//    profiler.Dump();
   }
 
   // Returns how many times AddInput() was called.
