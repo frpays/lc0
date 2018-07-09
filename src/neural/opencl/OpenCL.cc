@@ -209,6 +209,7 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
       convolve3(layer.channels, layer.outputs, inBuffer, inBuffer, VBuffer,
                 MBuffer, conv_weights, nullptr, bn_weights, skip_in_trans,
                 skip_next_in_trans, true, batch_size);
+      queue.flush();
       profiler.Step(NetworkStepFirstConvolve3);
       
       skip_in_trans = skip_next_in_trans;
@@ -222,7 +223,8 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
       convolve3(layer.channels, layer.outputs, inBuffer, inBuffer2, VBuffer,
                 MBuffer, conv1_weights, nullptr, bn1_weights, skip_in_trans,
                 true, false, batch_size);
-      profiler.Step(NetworkStepResConvolve3);
+      queue.flush();
+      profiler.Step(NetworkStepResConvolve3_1);
 
       auto skip_next_in_trans = false;
       if (niter->is_residual_block) {
@@ -231,7 +233,8 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
       convolve3(layer.channels, layer.outputs, inBuffer2, inBuffer, VBuffer,
                 MBuffer, conv2_weights, &inBuffer, bn2_weights, true,
                 skip_next_in_trans, true, batch_size);
-      profiler.Step(NetworkStepResConvolve3);
+      queue.flush();
+  profiler.Step(NetworkStepResConvolve3_2);
       skip_in_trans = skip_next_in_trans;
     } else {
       assert(layer.is_value || layer.is_policy);
@@ -253,6 +256,7 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
       innerproduct(inBuffer2, ip_w, ip_b, out_buffer, layer.ip_in_size,
                    layer.ip_out_size, layer.is_value, batch_size);
       
+      queue.flush();
       profiler.Step(layer.is_value ? NetworkStepInneproductV1 :NetworkStepInneproductP1);
     }
 
@@ -268,6 +272,7 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
       queue.enqueueMapBuffer(opencl_thread_data.m_pinnedOutBuffer_val, CL_FALSE,
                              CL_MAP_READ, 0, batch_size * finalSize_val);
 
+  queue.flush();
   profiler.Step(NetworkStepEnd4);
   /*
   {
