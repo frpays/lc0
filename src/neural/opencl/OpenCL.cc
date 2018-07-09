@@ -272,8 +272,9 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
       queue.enqueueMapBuffer(opencl_thread_data.m_pinnedOutBuffer_val, CL_FALSE,
                              CL_MAP_READ, 0, batch_size * finalSize_val);
 
-  queue.flush();
   profiler.Step(NetworkStepEnd4);
+  queue.finish();
+  profiler.Step(NetworkStepEnd5);
   /*
   {
     // Finish call is usually a busy wait. When using multiple threads
