@@ -17,6 +17,7 @@
  */
 
 #include "neural/network.h"
+#include "neural/network_profiler.h"
 #include "neural/blas/batchnorm.h"
 #include "neural/blas/blas.h"
 #include "neural/blas/fully_connected_layer.h"
@@ -90,19 +91,25 @@ class OpenCLComputation : public NetworkComputation {
      num_output_policy = 1858
      */
 
+    NetworkProfiler profiler;
+    
     std::vector<float> output_pol(largest_batch_size* weights_.num_output_policies);
     std::vector<float> output_val(largest_batch_size* weights_.num_value_channels);
     std::vector<float> input_data(largest_batch_size * kInputPlanes * kSquares);
     
     for (size_t i = 0; i < plane_count; i += largest_batch_size) {
       const auto batch_size = std::min(plane_count - i, largest_batch_size);
+      profiler.Start(batch_size);
+      
       for (size_t j = 0; j < batch_size; j++) {
         EncodePlanes(planes_[i + j], &input_data[j * kSquares * kInputPlanes]);
       }
-      
+      profiler.Step(NetworkStepEncoding);
+
       opencl_net_.forward(input_data, output_pol, output_val, batch_size);
-      
-      for (size_t j = 0; j < batch_size; j++) {
+      profiler.Step(NetworkStepForward);
+
+     for (size_t j = 0; j < batch_size; j++) {
         std::vector<float> policy(weights_.num_output_policies);
         
         // Get the moves
@@ -122,7 +129,10 @@ class OpenCLComputation : public NetworkComputation {
         
         q_values_.emplace_back(std::tanh(winrate));
       }
+      profiler.Step(NetworkStepEnd);
     }
+    
+    profiler.Dump();
   }
 
   // Returns how many times AddInput() was called.

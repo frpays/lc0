@@ -42,7 +42,7 @@ static constexpr auto WINOGRAD_TILE = 4 * 4;
 
 /* Maximum supported batch size for OpenCL.
 */
-static constexpr auto kMaxOpenCLBatchSize = 8;
+static constexpr auto kMaxOpenCLBatchSize = 2;
 
 class OpenCL;
 
