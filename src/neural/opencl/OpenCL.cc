@@ -275,16 +275,6 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
   profiler.Step(NetworkStepEnd4);
   queue.finish();
   profiler.Step(NetworkStepEnd5);
-  /*
-  {
-    // Finish call is usually a busy wait. When using multiple threads
-    // use the lock to avoid busy waiting with all threads.
-    std::lock_guard<std::mutex> lock(m_queue_finish_mutex);
-    profiler.Step(NetworkStepEnd5);
-   queue.finish();
-    profiler.Step(NetworkStepEnd6);
- }
-   */
 
   std::memcpy(output_pol.data(), pinnedOutBufferHost_pol, batch_size * finalSize_pol);
   profiler.Step(NetworkStepEnd7);
