@@ -263,6 +263,10 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
   }
   profiler.Step(NetworkStepEnd);
 
+  queue.finish();
+  profiler.Step(NetworkStepEnd5);
+
+  
   auto pinnedOutBufferHost_pol =
       queue.enqueueMapBuffer(opencl_thread_data.m_pinnedOutBuffer_pol, CL_FALSE,
                              CL_MAP_READ, 0, batch_size * finalSize_pol);
@@ -273,8 +277,6 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
                              CL_MAP_READ, 0, batch_size * finalSize_val);
 
   profiler.Step(NetworkStepEnd4);
-  queue.finish();
-  profiler.Step(NetworkStepEnd5);
 
   std::memcpy(output_pol.data(), pinnedOutBufferHost_pol, batch_size * finalSize_pol);
   profiler.Step(NetworkStepEnd7);
