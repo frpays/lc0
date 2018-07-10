@@ -240,28 +240,10 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
                    layer.ip_out_size, layer.is_value);
     }
   }
-
-  auto pinnedOutBufferHost_pol =
-      queue.enqueueMapBuffer(opencl_thread_data.m_pinnedOutBuffer_pol, CL_FALSE,
-                             CL_MAP_READ, 0, finalSize_pol);
-  auto pinnedOutBufferHost_val =
-      queue.enqueueMapBuffer(opencl_thread_data.m_pinnedOutBuffer_val, CL_FALSE,
-                             CL_MAP_READ, 0, finalSize_val);
-
-  {
-    // Finish call is usually a busy wait. When using multiple threads
-    // use the lock to avoid busy waiting with all threads.
-    std::lock_guard<std::mutex> lock(m_queue_finish_mutex);
-    queue.finish();
-  }
-
-  std::memcpy(output_pol.data(), pinnedOutBufferHost_pol, finalSize_pol);
-  std::memcpy(output_val.data(), pinnedOutBufferHost_val, finalSize_val);
-
-  queue.enqueueUnmapMemObject(opencl_thread_data.m_pinnedOutBuffer_pol,
-                              pinnedOutBufferHost_pol);
-  queue.enqueueUnmapMemObject(opencl_thread_data.m_pinnedOutBuffer_val,
-                              pinnedOutBufferHost_val);
+  
+  queue.enqueueReadBuffer(opencl_thread_data.m_pinnedOutBuffer_pol, CL_FALSE, 0, finalSize_pol,output_pol.data(), 0);
+  queue.enqueueReadBuffer(opencl_thread_data.m_pinnedOutBuffer_val, CL_FALSE, 0, finalSize_pol,output_val.data(), 0);
+  queue.finish();
 }
 
 void OpenCL_Network::convolve3(int channels, int outputs, cl::Buffer& bufferIn,
