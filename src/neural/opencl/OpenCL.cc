@@ -273,33 +273,11 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
   queue.finish();
   profiler.Step(NetworkStepEnd5);
 
-  
-  auto pinnedOutBufferHost_pol =
-      queue.enqueueMapBuffer(opencl_thread_data.m_pinnedOutBuffer_pol, CL_FALSE,
-                             CL_MAP_READ, 0, batch_size * finalSize_pol);
-  profiler.Step(NetworkStepEnd3);
-
-  auto pinnedOutBufferHost_val =
-      queue.enqueueMapBuffer(opencl_thread_data.m_pinnedOutBuffer_val, CL_FALSE,
-                             CL_MAP_READ, 0, batch_size * finalSize_val);
-
-  profiler.Step(NetworkStepEnd4);
-
-  std::memcpy(output_pol.data(), pinnedOutBufferHost_pol, batch_size * finalSize_pol);
+  queue.enqueueReadBuffer(opencl_thread_data.m_pinnedOutBuffer_pol, CL_FALSE, 0, batch_size*finalSize_pol,  output_pol.data(), 0);
+  profiler.Step(NetworkStepEnd6);
+  queue.enqueueReadBuffer(opencl_thread_data.m_pinnedOutBuffer_val, CL_FALSE, 0, batch_size*finalSize_val, output_val.data(), 0);
   profiler.Step(NetworkStepEnd7);
-  std::memcpy(output_val.data(), pinnedOutBufferHost_val, batch_size * finalSize_val);
-  profiler.Step(NetworkStepEnd8);
 
-  queue.enqueueUnmapMemObject(opencl_thread_data.m_pinnedOutBuffer_pol,
-                              pinnedOutBufferHost_pol);
-  profiler.Step(NetworkStepEnd9);
-  queue.enqueueUnmapMemObject(opencl_thread_data.m_pinnedOutBuffer_val,
-                              pinnedOutBufferHost_val);
-  
-  
-  
-  profiler.Step(NetworkStepEnd2);
-  
   profiler.Dump();
   
 }
@@ -529,7 +507,6 @@ void OpenCL_Network::innerproduct(cl::Buffer& input, weight_slice_t weights,
   auto global_size = m_ceil / wpt1;
   auto local_size = wgs1;
   
-  for (int i=0; i<batch_size; i++) {
     try {
       // Sets the kernel arguments
       sgemv_kernel.setArg(0, static_cast<int>(outputs));
@@ -538,21 +515,20 @@ void OpenCL_Network::innerproduct(cl::Buffer& input, weight_slice_t weights,
       sgemv_kernel.setArg(3, static_cast<int>(0));
       sgemv_kernel.setArg(4, static_cast<int>(inputs));
       sgemv_kernel.setArg(5, input);
-      sgemv_kernel.setArg(6, static_cast<int>(i*inputs));
+      sgemv_kernel.setArg(6, static_cast<int>(0));
       sgemv_kernel.setArg(7, output);
-      sgemv_kernel.setArg(8, static_cast<int>(i*outputs));
+      sgemv_kernel.setArg(8, static_cast<int>(0));
       sgemv_kernel.setArg(9, biases[0]);
       sgemv_kernel.setArg(10, static_cast<int>(relu));
       
       queue.enqueueNDRangeKernel(sgemv_kernel, cl::NullRange,
-                                 cl::NDRange(global_size),
-                                 cl::NDRange(local_size));
+                                 cl::NDRange(global_size, batch_size),
+                                 cl::NDRange(local_size, 1));
     } catch (const cl::Error& e) {
       std::cerr << "Error in innerproduct: " << e.what() << ": " << e.err()
       << std::endl;
       throw;
     }
-  }
 }
 
 template <class T>
