@@ -241,8 +241,8 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
     }
   }
   
-  queue.enqueueReadBuffer(opencl_thread_data.m_pinnedOutBuffer_pol, CL_FALSE, 0, finalSize_pol,output_pol.data(), 0);
-  queue.enqueueReadBuffer(opencl_thread_data.m_pinnedOutBuffer_val, CL_FALSE, 0, finalSize_pol,output_val.data(), 0);
+  queue.enqueueReadBuffer(opencl_thread_data.m_pinnedOutBuffer_pol, CL_FALSE, 0, finalSize_pol,  output_pol.data(), 0);
+  queue.enqueueReadBuffer(opencl_thread_data.m_pinnedOutBuffer_val, CL_FALSE, 0, finalSize_val, output_val.data(), 0);
   queue.finish();
 }
 
