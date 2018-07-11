@@ -622,6 +622,7 @@ void OpenCL::initialize(const int channels, const OpenCLParams& params) {
   auto best_score = 0;
   auto found_device = false;
   auto id = 0;
+  auto best_device_id = 0;
 
   if (verbose) {
     fprintf(stderr, "Detected %zu OpenCL platforms.\n", platforms.size());
@@ -688,6 +689,7 @@ void OpenCL::initialize(const int channels, const OpenCLParams& params) {
         best_version = opencl_version;
         best_platform = p;
         best_device = d;
+        best_device_id =id;
         best_vendor = this_vendor;
         if (preferred) {
           best_score = std::numeric_limits<decltype(best_score)>::max();
@@ -707,7 +709,8 @@ void OpenCL::initialize(const int channels, const OpenCLParams& params) {
   if (verbose) {
     fprintf(stderr, "Selected platform: %s\n",
            best_platform.getInfo<CL_PLATFORM_NAME>().c_str());
-    fprintf(stderr, "Selected device: %s\n",
+    fprintf(stderr, "Selected device: %d, %s \n",
+           best_device_id,
            trim_left(best_device.getInfo<CL_DEVICE_NAME>().c_str()));
     fprintf(stderr, "with OpenCL %2.1f capability.\n", best_version);
   }
