@@ -158,8 +158,13 @@ class OpenCLNetwork : public Network {
 
     static constexpr auto kWinogradAlpha = 4;
 
+    try {
     opencl_.initialize(channels, params_);
-
+    }
+    catch (const cl::Error& exc) {
+      fprintf(stderr, "OpenCL init error %d (code %d)", exc.what(), exc.err());
+    }
+        
     auto tuners = opencl_.get_sgemm_tuners();
 
     auto mwg = tuners[0];
