@@ -57,7 +57,7 @@ struct OpenCLWeights {
 
 class OpenCLComputation : public NetworkComputation {
  public:
-  OpenCLComputation(const OpenCL_Network& opencl_net,
+  OpenCLComputation(OpenCL_Network& opencl_net,
                     const OpenCLWeights& weights)
       : opencl_net_(opencl_net),
         weights_(weights),
@@ -114,7 +114,7 @@ class OpenCLComputation : public NetworkComputation {
   }
 
  private:
-  const OpenCL_Network& opencl_net_;
+  OpenCL_Network& opencl_net_;
   const OpenCLWeights& weights_;
 
   std::vector<InputPlanes> planes_;
@@ -131,6 +131,7 @@ class OpenCLNetwork : public Network {
 
   OpenCLNetwork(const Weights& weights, const OptionsDict& options)
       : weights_(weights), params_(), opencl_(), opencl_net_(opencl_) {
+        
     params_.gpuId = options.GetOrDefault<int>("gpu", -1);
     params_.verbose = options.GetOrDefault<bool>("verbose", true);
     params_.force_tune = options.GetOrDefault<bool>("force_tune", false);
@@ -155,16 +156,27 @@ class OpenCLNetwork : public Network {
      num_value_channels = 128
      num_output_policy = 1858
      */
-
-    static constexpr auto kWinogradAlpha = 4;
-
-    try {
-      opencl_.initialize(channels, params_);
-    }
-    catch (const cl::Error& exc) {
-      fprintf(stderr, "OpenCL init error %s (code %d)\n", exc.what(), exc.err());
-      exit(1);
-    }
+        
+        static constexpr auto kWinogradAlpha = 4;
+        
+        try {
+          opencl_.initialize(channels, params_);
+        }
+        catch (const cl::Error& exc) {
+          fprintf(stderr, "OpenCL init error %s (code %d)\n", exc.what(), exc.err());
+          exit(1);
+        }
+        
+        
+        try {
+          opencl_net_.initialize(params_.verbose);
+        }
+        catch (const cl::Error& exc) {
+          fprintf(stderr, "OpenCL net  error %s (code %d)\n", exc.what(), exc.err());
+          exit(1);
+        }
+        
+        
         
     auto tuners = opencl_.get_sgemm_tuners();
 
@@ -238,6 +250,9 @@ class OpenCLNetwork : public Network {
                            num_value_channels, weights.value.weights,
                            bn_val_means, bn_val_stddivs, weights.ip1_val_w,
                            weights.ip1_val_b);
+        
+        
+        opencl_net_.allocate_buffers();
   }
 
   std::unique_ptr<NetworkComputation> NewComputation() override {
@@ -248,7 +263,8 @@ class OpenCLNetwork : public Network {
   OpenCLWeights weights_;
   OpenCLParams params_;
   OpenCL opencl_;
-  OpenCL_Network opencl_net_;
+  mutable OpenCL_Network opencl_net_;
+
 };
 
 }  // namespace
