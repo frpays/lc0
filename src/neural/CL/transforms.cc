@@ -16,6 +16,7 @@
  along with Leela Chess.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "neural/network_profiler.h"
 #include "neural/CL/transforms.h"
 #include "utils/blas.h"
 
@@ -24,6 +25,10 @@
 #include <cmath>
 
 namespace lczero {
+  
+  
+  
+  NetworkProfiler Transforms::profiler;
 
 std::vector<float> Transforms::ZeropadU(const std::vector<float>& U,
                                         const int outputs, const int channels,
@@ -253,9 +258,22 @@ void Transforms::WinogradConvolve3(const int outputs,
   constexpr unsigned int filter_len = kWinogradAlpha * kWinogradAlpha;
   const auto input_channels = U.size() / (outputs * filter_len);
 
+  profiler.Start(1);
+  
   WinogradTransformIn(input, V, input_channels);
+  
+  profiler.Step(NetworkStepWinogradTransformIn);
+
   WinogradSgemm(U, V, M, input_channels, outputs);
+  
+  profiler.Step(NetworkStepWinogradTransformSgemm);
+
+  
   WinogradTransformOut(M, output, outputs);
+  
+  profiler.Step(NetworkStepWinogradTransformOut);
+
+  profiler.Dump();
 }
 
 template <unsigned int filter_size>

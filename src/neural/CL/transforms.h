@@ -21,6 +21,9 @@
 #include <array>
 #include <vector>
 
+#include "neural/network_profiler.h"
+
+
 namespace lczero {
 
 class Transforms {
@@ -85,6 +88,9 @@ class Transforms {
                                    const std::vector<float>& biases);
 
   static void InvertBatchNormStddev(std::vector<float>& weights);
+  
+  
+  static NetworkProfiler profiler;
 };
 
 }  // lczero
