@@ -26,6 +26,9 @@
 #include <array>
 
 namespace lczero {
+  
+  
+  NetworkProfiler WinogradConvolution3::profiler;
 
 std::vector<float> WinogradConvolution3::ZeropadU(const std::vector<float>& U,
                                                   const size_t outputs,
@@ -99,9 +102,22 @@ void WinogradConvolution3::Forward(const size_t batch_size,
                                    const size_t output_channels,
                                    const float* input, const float* weights,
                                    float* output) {
+  
+  profiler.Start(batch_size);
+  
   TransformIn(batch_size, input, input_channels);
+  
+  profiler.Step(NetworkStepWinogradTransformIn);
+  
   Sgemm(batch_size, weights, input_channels, output_channels);
+  
+  profiler.Step(NetworkStepWinogradTransformSgemm);
+  
   TransformOut(batch_size, output, output_channels);
+  
+  profiler.Step(NetworkStepWinogradTransformOut);
+  profiler.Dump();
+
 }
 
 void WinogradConvolution3::TransformIn(const size_t batch_size,

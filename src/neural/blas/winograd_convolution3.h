@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include "neural/network_profiler.h"
+
 #include <cstddef>
 #include <vector>
 
@@ -82,5 +84,8 @@ class WinogradConvolution3 {
 
   std::vector<float> V_;
   std::vector<float> M_;
+  
+  static NetworkProfiler profiler;
+  
 };
 }
