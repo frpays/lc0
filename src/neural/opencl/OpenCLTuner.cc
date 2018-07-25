@@ -26,6 +26,9 @@
 #include <sstream>
 #include <string>
 
+#include "utils/Random.h"
+
+
 #include "neural/opencl/OpenCL.h"
 #include "neural/opencl/OpenCLParams.h"
 #include "neural/opencl/OpenCLTuner.h"
@@ -171,6 +174,12 @@ static float compare_ref(std::vector<float>& x, std::vector<float>& ref,
 }
 
 std::string Tuner::tune_sgemm(const int m, const int n, const int k,
+                              const int batch_size, const int runs) {
+
+  return tune_sgemm2(m, n, k, batch_size, runs);
+}
+
+std::string Tuner::tune_sgemm1(const int m, const int n, const int k,
                               const int batch_size, const int runs) {
   auto opts = std::vector<Configurations>();
   if (m_params.tune_exhaustive) {
@@ -349,8 +358,251 @@ std::string Tuner::tune_sgemm(const int m, const int n, const int k,
         "drivers.\n");
     throw std::runtime_error("Tuner failed to find working configuration.");
   }
+ return best_params;
+}
+
+
+std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
+                               const int batch_size, const int runs) {
+  
+  auto opts = std::vector<Configurations>();
+  opts = {
+    {"MWG", {16, 32, 64}},  {"NWG", {16, 32, 64}},  {"KWG", {16, 32}},
+    {"MDIMC", {8, 16, 32}}, {"NDIMC", {8, 16, 32}}, {"MDIMA", {8, 16, 32}},
+    {"NDIMB", {8, 16, 32}}, {"KWI", {2, 8}},        {"VWM", {1, 2, 4, 8}},
+    {"VWN", {1, 2, 4, 8}},  {"STRM", {0, 1}},       {"STRN", {0, 1}},
+    {"SA", {0, 1}},         {"SB", {0, 1}},
+    
+  };
+  
+  // This needs to be at minimum the maximum (MNK/WG) values above.
+  auto m_max = std::max(64, m);
+  auto n_max = std::max(64, n);
+  auto k_max = std::max(32, k);
+  
+  auto at_size =
+  batch_size * next_power_of_two(k_max) * next_power_of_two(m_max);
+  auto b_size =
+  batch_size * next_power_of_two(k_max) * next_power_of_two(n_max);
+  auto c_size =
+  batch_size * next_power_of_two(m_max) * next_power_of_two(n_max);
+  
+  auto total_flops = batch_size * 2.0 * m * n * k;
+  
+  auto at = std::vector<float>(at_size);
+  auto b = std::vector<float>(b_size);
+  auto c = std::vector<float>(c_size);
+  auto c_ref = std::vector<float>(c_size);
+  
+  sgemm_generate_data(at, k, m, batch_size, k, m);
+  sgemm_generate_data(b, n, k, batch_size, n, k);
+  
+  sgemmBatched_ref(at, b, c_ref, m, n, k, batch_size);
+  
+  auto aBuffer = cl::Buffer(m_context, CL_MEM_READ_WRITE,
+                            sizeof(float) * at_size, nullptr, nullptr);
+  auto bBuffer = cl::Buffer(m_context, CL_MEM_READ_WRITE,
+                            sizeof(float) * b_size, nullptr, nullptr);
+  auto cBuffer = cl::Buffer(m_context, CL_MEM_READ_WRITE,
+                            sizeof(float) * c_size, nullptr, nullptr);
+  
+  fprintf(stderr, "\nStarted OpenCL SGEMM tuner.\n");
+  
+  size_t cfgs = 1;
+  for (auto c = size_t{0}; c < opts.size(); c++) {
+    cfgs *= opts[c].second.size();
+  }
+  fprintf(stderr, "Total %lu configurations\n", cfgs);
+  
+  std::string best_params;
+  auto best_time = unsigned{0};
+  float best_gflops=0;
+  
+  auto queue = cl::CommandQueue(m_context, m_device, CL_QUEUE_PROFILING_ENABLE);
+  auto event = cl::Event();
+  auto program = cl::Program(m_context, sourceCode_sgemm);
+  
+  auto m_ceil_prev = 0;
+  auto n_ceil_prev = 0;
+  auto k_ceil_prev = 0;
+  auto param_counter = size_t{0};
+  
+  
+  for (int seed=0; seed<20; seed++)
+  {
+    
+    int index=lczero::Random::Get().GetInt(0, cfgs);
+    
+    TuneParameters p = get_parameters_by_int(opts, index);
+    TuneParameters p_walk = p;
+    
+    unsigned long long march_fastest=0;
+    std::string march_best;
+    float march_gflops=0;
+    
+    auto beg=parameters_to_defines(p_walk);
+    fprintf(stderr, "seed begin: %d %s\n", seed, beg.c_str());
+
+    
+    for (int march=0; march<200; march++) {
+      
+      for (int changes=0; changes<5; changes++) {
+        
+        const auto param_counts=opts.size();
+        auto p0=lczero::Random::Get().GetInt(0, param_counts-1);
+        
+        auto b0=2*lczero::Random::Get().GetInt(0, 2)-1;
+        
+        auto name=opts[p0].first;
+        auto  value=p_walk[name];
+        
+        auto values=opts[p0].second;
+        auto value_count=values.size();
+        auto value_index=-1;
+        
+        for (int k=0; k<value_count; k++) {
+          if (value==values[k]) {
+            value_index=k;
+            break;
+          }
+        }
+        
+        if (value_index<0)
+          continue;
+        
+        value_index+=b0;
+        if (value_index<0)
+          continue;
+        
+        if (value_index>=value_count)
+          continue;
+        
+        p_walk[name]=values[value_index];
+        
+//        fprintf(stderr, "change %d, %s from %d to %d\n", changes, name.c_str(), value, values[value_index]);
+        
+      }
+      
+      auto defines = parameters_to_defines(p_walk);
+//      fprintf(stderr, "new %s \n", defines.c_str());
+      
+      try {
+        auto args = m_opencl.m_cl_args + " " + defines;
+        program.build(args.c_str());
+      } catch (const cl::Error&) {
+        // Failed to compile, get next parameter
+        continue;
+      }
+      
+      auto sgemm_kernel = cl::Kernel(program, "XgemmBatched");
+      
+      auto m_ceil = (int)ceilMultiple(ceilMultiple(m, p["MWG"]), p["VWM"]);
+      auto n_ceil = (int)ceilMultiple(ceilMultiple(n, p["NWG"]), p["VWN"]);
+      auto k_ceil = (int)ceilMultiple(ceilMultiple(k, p["KWG"]), p["VWM"]);
+      
+      if (m_ceil != m_ceil_prev || n_ceil != n_ceil_prev ||
+          k_ceil != k_ceil_prev) {
+        m_ceil_prev = m_ceil;
+        n_ceil_prev = n_ceil;
+        k_ceil_prev = k_ceil;
+        
+        sgemm_generate_data(at, k, m, batch_size, k_ceil, m_ceil);
+        sgemm_generate_data(b, n, k, batch_size, n_ceil, k_ceil);
+        
+        queue.enqueueWriteBuffer(aBuffer, CL_FALSE, 0, at_size * sizeof(float),
+                                 at.data());
+        queue.enqueueWriteBuffer(bBuffer, CL_FALSE, 0, b_size * sizeof(float),
+                                 b.data());
+        queue.finish();
+      }
+      
+      sgemm_kernel.setArg(0, m_ceil);
+      sgemm_kernel.setArg(1, n_ceil);
+      sgemm_kernel.setArg(2, k_ceil);
+      sgemm_kernel.setArg(3, aBuffer);
+      sgemm_kernel.setArg(4, bBuffer);
+      sgemm_kernel.setArg(5, cBuffer);
+      
+      cl::NDRange local_sgemm = {p["MDIMC"], p["NDIMC"], 1};
+      
+      cl::NDRange size_sgemm = {(m_ceil * p["MDIMC"]) / p["MWG"],
+        (n_ceil * p["NDIMC"]) / p["NWG"],
+        (size_t)batch_size};
+      
+      auto sum = 0.0f;
+      auto max_error = 0.0f;
+      for (auto r = 0; r < runs; r++) {
+        try {
+          queue.enqueueNDRangeKernel(sgemm_kernel, cl::NullRange, size_sgemm,
+                                     local_sgemm, nullptr, &event);
+          queue.finish();
+          event.wait();
+          
+          queue.enqueueReadBuffer(cBuffer, CL_FALSE, 0, c_size * sizeof(float),
+                                  c.data());
+          queue.finish();
+          
+          auto this_error =
+          compare_ref(c, c_ref, n, m, batch_size, n_ceil, m_ceil);
+          max_error = std::max(max_error, this_error);
+          
+          auto elapsed = event.getProfilingInfo<CL_PROFILING_COMMAND_END>() -
+          event.getProfilingInfo<CL_PROFILING_COMMAND_START>();
+          
+          sum += elapsed;
+        } catch (const cl::Error&) {
+          // Failed to enqueue kernel. Set error to max.
+          max_error = MAX_ERROR;
+          break;
+        }
+      }
+      
+      
+      if (max_error < MAX_ERROR && (march_fastest == 0 || sum < march_fastest)) {
+        auto param_str = parameters_to_string(p);
+        auto kernel_ms = 1e-6f * (sum / runs);
+        // Timing is in nanoseconds (10^-9), Giga = 10^9, so this works out
+        auto kernel_gflops = total_flops / (sum / runs);
+        fprintf(stderr, "march %s %.4f ms (%.1f GFLOPS)\n",  param_str.c_str(), kernel_ms, kernel_gflops);
+        march_fastest = sum;
+        march_best = defines;
+        march_gflops=kernel_gflops;
+        p=p_walk;
+      }
+      
+    } // march
+    
+    auto end=parameters_to_defines(p_walk);
+    fprintf(stderr, "seed end: %s\n",end.c_str());
+
+    
+    if (march_fastest>0 && (best_time==0 || march_fastest<best_time)) {
+      
+      best_time=march_fastest;
+      best_params=march_best;
+      best_gflops=march_gflops;
+
+      fprintf(stderr, "seed %s %.4f ms (%.1f GFLOPS)\n",  best_params.c_str(), (best_time/runs), march_gflops);
+    }
+    
+  } // seed
+  
+  
+  if (best_time == 0) {
+    fprintf(stderr,
+            "Failed to find a working configuration.\nCheck your OpenCL "
+            "drivers.\n");
+    throw std::runtime_error("Tuner failed to find working configuration.");
+  }
+  
+  fprintf(stderr, "best: %s at (%.1f GFLOPS)\n", best_params.c_str(), best_gflops);
+  
   return best_params;
 }
+
+
+
+
 
 void Tuner::store_sgemm_tuners(const int m, const int n, const int k,
                                const int batch_size, std::string tuners) {
