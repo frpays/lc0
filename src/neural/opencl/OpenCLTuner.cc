@@ -32,7 +32,7 @@
 #include "neural/opencl/OpenCLParams.h"
 #include "neural/opencl/OpenCLTuner.h"
 #include "neural/blas/blas.h"
-#include "utils/Random.h"
+#include "utils/random.h"
 
 
 const auto kTunerFilename = std::string("leelaz_opencl_tuning");
@@ -250,9 +250,8 @@ std::string Tuner::tune_sgemm1(const int m, const int n, const int k,
     TuneParameters param = get_parameters_by_int(opts, i);
     if (valid_config_sgemm(param, m_params.tune_exhaustive)) {
       if (m_params.tune_exhaustive) {
-        //                if (rng.RandInt<std::uint16_t>(16) != 0) {
-        //                    continue;
-        //               }
+        if (lczero::Random::Get().GetInt(0, 16)!=7)
+          continue;
       }
       valid_params.emplace_back(i);
     }
