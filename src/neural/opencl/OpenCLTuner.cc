@@ -35,10 +35,13 @@
 const auto kTunerFilename = std::string("leelaz_opencl_tuning");
 
 static constexpr auto kMaxError = 1e-4f;
-static constexpr auto kRuns = 4;
+static constexpr auto kDefaultRuns = 4;
 static constexpr auto kSeeds = 50;
 static constexpr auto kWalkLength = 50;
 static constexpr auto kWalkMinChanges = 3;
+
+static constexpr auto kTimingAccuracyUs = 5;
+static constexpr auto kAccuracyRuns = 16;
 
 static void sgemmBatched_ref(const std::vector<float>& a,
                              const std::vector<float>& b, std::vector<float>& c,
@@ -320,7 +323,7 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
 
     auto sum = 0.0f;
     auto max_error = 0.0f;
-    for (auto r = 0; r < kRuns; r++) {
+    for (auto r = 0; r < kDefaultRuns; r++) {
       try {
         queue.enqueueNDRangeKernel(sgemm_kernel, cl::NullRange, size_sgemm,
                                    local_sgemm, nullptr, &event);
@@ -347,9 +350,9 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
     }
     if (max_error < kMaxError && (best_time == 0 || sum < best_time)) {
       auto param_str = parameters_to_string(p);
-      auto kernel_ms = 1e-6f * (sum / kRuns);
+      auto kernel_ms = 1e-6f * (sum / kDefaultRuns);
       // Timing is in nanoseconds (10^-9), Giga = 10^9, so this works out
-      auto kernel_gflops = total_flops / (sum / kRuns);
+      auto kernel_gflops = total_flops / (sum / kDefaultRuns);
       fprintf(stderr, "(%zu/%zu) %s %.4f ms (%.1f GFLOPS)\n", param_counter,
               valid_params.size(), param_str.c_str(), kernel_ms, kernel_gflops);
       best_time = sum;
@@ -535,7 +538,8 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
       double sum = 0;
       bool error = false;
 
-      for (auto r = 0; r < kRuns; r++) {
+      int runs=0;
+      while (runs<kAccuracyRuns) {
         try {
           queue.enqueueNDRangeKernel(sgemm_kernel, cl::NullRange, size_sgemm,
                                      local_sgemm, nullptr, &event);
@@ -554,6 +558,17 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
                          event.getProfilingInfo<CL_PROFILING_COMMAND_START>();
 
           sum += elapsed;
+          runs++;
+          
+          if (runs==1 && best_time_us>0) {
+            
+            // If we are slower than 5us on the first run, give up.
+            auto slower_us=1e-3*elapsed-best_time_us;
+            if (slower_us>kTimingAccuracyUs)
+              break;
+            
+          }
+          
         } catch (const cl::Error& e) {
           fprintf(stderr, "Error %s\n", e.what());
         }
@@ -563,13 +578,13 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
         p = p_old;
         continue;
       }
-
-      auto time_us = 1e-3 * (sum / kRuns);
+              
+      auto time_us = 1e-3 * (sum / runs);
 
       if (walk_best_time_us == 0 || time_us < walk_best_time_us) {
         walk_best_time_us = time_us;
         walk_best_params = defines;
-        walk_best_gflops = total_flops / (sum / kRuns);
+        walk_best_gflops = total_flops / (sum / runs);
         walk_best_string = parameters_to_string(p);
 
         if (best_time_us == 0 || walk_best_time_us < best_time_us) {
