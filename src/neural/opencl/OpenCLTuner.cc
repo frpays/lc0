@@ -38,7 +38,7 @@
 const auto kTunerFilename = std::string("leelaz_opencl_tuning");
 
 static constexpr auto kMaxError = 1e-4f;
-//static constexpr auto kRuns = 5;
+static constexpr auto kRuns = 4;
 static constexpr auto kSeeds = 50;
 static constexpr auto kWalkLength = 50;
 static constexpr auto kWalkMinChanges = 3;
@@ -181,13 +181,13 @@ static float compare_ref(std::vector<float>& x, std::vector<float>& ref,
 }
 
 std::string Tuner::tune_sgemm(const int m, const int n, const int k,
-                              const int batch_size, const int runs) {
+                              const int batch_size) {
 
-  return tune_sgemm1(m, n, k, batch_size, runs);
+  return tune_sgemm1(m, n, k, batch_size);
 }
 
 std::string Tuner::tune_sgemm1(const int m, const int n, const int k,
-                              const int batch_size, const int runs) {
+                              const int batch_size) {
   auto opts = std::vector<Configurations>();
   if (m_params.tune_exhaustive) {
     opts = {
@@ -322,7 +322,7 @@ std::string Tuner::tune_sgemm1(const int m, const int n, const int k,
 
     auto sum = 0.0f;
     auto max_error = 0.0f;
-    for (auto r = 0; r < runs; r++) {
+    for (auto r = 0; r < kRuns; r++) {
       try {
         queue.enqueueNDRangeKernel(sgemm_kernel, cl::NullRange, size_sgemm,
                                    local_sgemm, nullptr, &event);
@@ -349,9 +349,9 @@ std::string Tuner::tune_sgemm1(const int m, const int n, const int k,
     }
     if (max_error < kMaxError && (best_time == 0 || sum < best_time)) {
       auto param_str = parameters_to_string(p);
-      auto kernel_ms = 1e-6f * (sum / runs);
+      auto kernel_ms = 1e-6f * (sum / kRuns);
       // Timing is in nanoseconds (10^-9), Giga = 10^9, so this works out
-      auto kernel_gflops = total_flops / (sum / runs);
+      auto kernel_gflops = total_flops / (sum / kRuns);
       fprintf(stderr, "(%zu/%zu) %s %.4f ms (%.1f GFLOPS)\n", param_counter,
              valid_params.size(), param_str.c_str(), kernel_ms, kernel_gflops);
       best_time = sum;
@@ -369,7 +369,7 @@ std::string Tuner::tune_sgemm1(const int m, const int n, const int k,
 
 
 std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
-                               const int batch_size, const int runs) {
+                               const int batch_size) {
   
   auto opts = std::vector<Configurations>();
   opts = {
@@ -552,7 +552,7 @@ std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
       double sum = 0;
       bool error=false;
       
-      for (auto r = 0; r < runs; r++) {
+      for (auto r = 0; r < kRuns; r++) {
         try {
           queue.enqueueNDRangeKernel(sgemm_kernel, cl::NullRange, size_sgemm,
                                      local_sgemm, nullptr, &event);
@@ -582,12 +582,12 @@ std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
           continue;
         }
       
-      auto time_us = 1e-3 * (sum / runs);
+      auto time_us = 1e-3 * (sum / kRuns);
       
       if (walk_best_time_us == 0 || time_us < walk_best_time_us) {
         walk_best_time_us = time_us;
         walk_best_params = defines;
-        walk_best_gflops=total_flops / (sum / runs);
+        walk_best_gflops=total_flops / (sum / kRuns);
         walk_best_string=parameters_to_string(p);
         
         if (best_time_us==0 || walk_best_time_us<best_time_us) {
