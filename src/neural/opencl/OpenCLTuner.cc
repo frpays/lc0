@@ -26,17 +26,24 @@
 #include <sstream>
 #include <string>
 
-#include "utils/Random.h"
 
 
 #include "neural/opencl/OpenCL.h"
 #include "neural/opencl/OpenCLParams.h"
 #include "neural/opencl/OpenCLTuner.h"
-
 #include "neural/blas/blas.h"
+#include "utils/Random.h"
 
-const auto TUNER_FILE_LOCAL = std::string("leelaz_opencl_tuning");
-constexpr auto MAX_ERROR = 1e-4f;
+
+const auto kTunerFilename = std::string("leelaz_opencl_tuning");
+
+static constexpr auto kMaxError = 1e-4f;
+//static constexpr auto kRuns = 5;
+static constexpr auto kSeeds = 50;
+static constexpr auto kWalkLength = 50;
+static constexpr auto kWalkMinChanges = 3;
+
+
 
 static void sgemmBatched_ref(const std::vector<float>& a,
                              const std::vector<float>& b, std::vector<float>& c,
@@ -176,7 +183,7 @@ static float compare_ref(std::vector<float>& x, std::vector<float>& ref,
 std::string Tuner::tune_sgemm(const int m, const int n, const int k,
                               const int batch_size, const int runs) {
 
-  return tune_sgemm2(m, n, k, batch_size, runs);
+  return tune_sgemm1(m, n, k, batch_size, runs);
 }
 
 std::string Tuner::tune_sgemm1(const int m, const int n, const int k,
@@ -337,11 +344,11 @@ std::string Tuner::tune_sgemm1(const int m, const int n, const int k,
         sum += elapsed;
       } catch (const cl::Error&) {
         // Failed to enqueue kernel. Set error to max.
-        max_error = MAX_ERROR;
+        max_error = kMaxError;
         break;
       }
     }
-    if (max_error < MAX_ERROR && (best_time == 0 || sum < best_time)) {
+    if (max_error < kMaxError && (best_time == 0 || sum < best_time)) {
       auto param_str = parameters_to_string(p);
       auto kernel_ms = 1e-6f * (sum / runs);
       // Timing is in nanoseconds (10^-9), Giga = 10^9, so this works out
@@ -367,12 +374,20 @@ std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
   
   auto opts = std::vector<Configurations>();
   opts = {
-    {"MWG", {16, 32, 64}},  {"NWG", {16, 32, 64}},  {"KWG", {16, 32}},
-    {"MDIMC", {8, 16, 32}}, {"NDIMC", {8, 16, 32}}, {"MDIMA", {8, 16, 32}},
-    {"NDIMB", {8, 16, 32}}, {"KWI", {2, 8}},        {"VWM", {1, 2, 4, 8}},
-    {"VWN", {1, 2, 4, 8}},  {"STRM", {0, 1}},       {"STRN", {0, 1}},
-    {"SA", {0, 1}},         {"SB", {0, 1}},
-    
+    {"MWG", {16, 32, 64}},
+    {"NWG", {16, 32, 64}},
+    {"KWG", {16, 32}},
+    {"MDIMC", {8, 16, 32}},
+    {"NDIMC", {8, 16, 32}},
+    {"MDIMA", {8, 16, 32}},
+    {"NDIMB", {8, 16, 32}},
+    {"KWI", {2, 8}},
+    {"VWM", {2, 4}},
+    {"VWN", {2, 4}},
+    {"STRM", {0}},
+    {"STRN", {0}},
+    {"SA", {1}},
+    {"SB", {1}},
   };
   
   // This needs to be at minimum the maximum (MNK/WG) values above.
@@ -415,8 +430,9 @@ std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
   fprintf(stderr, "Total %lu configurations\n", cfgs);
   
   std::string best_params;
-  auto best_time = unsigned{0};
-  float best_gflops=0;
+  std::string best_string;
+  double best_time_us = 0;
+  double best_gflops=0;
   
   auto queue = cl::CommandQueue(m_context, m_device, CL_QUEUE_PROFILING_ENABLE);
   auto event = cl::Event();
@@ -428,25 +444,25 @@ std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
   auto param_counter = size_t{0};
   
   
-  for (int seed=0; seed<20; seed++)
+  for (int seed=0; seed<kSeeds; seed++)
   {
     
     int index=lczero::Random::Get().GetInt(0, cfgs);
     
     TuneParameters p = get_parameters_by_int(opts, index);
-    TuneParameters p_walk = p;
     
-    unsigned long long march_fastest=0;
-    std::string march_best;
-    float march_gflops=0;
-    
-    auto beg=parameters_to_defines(p_walk);
-    fprintf(stderr, "seed begin: %d %s\n", seed, beg.c_str());
+    std::string walk_best_params;
+    std::string walk_best_string;
+    double walk_best_time_us = 0;
+    double walk_best_gflops=0;
 
     
-    for (int march=0; march<200; march++) {
+    for (int steps=0; steps<kWalkLength; steps++) {
       
-      for (int changes=0; changes<5; changes++) {
+      TuneParameters p_old = p;
+
+      int changes=0;
+      while (true) {
         
         const auto param_counts=opts.size();
         auto p0=lczero::Random::Get().GetInt(0, param_counts-1);
@@ -454,7 +470,7 @@ std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
         auto b0=2*lczero::Random::Get().GetInt(0, 2)-1;
         
         auto name=opts[p0].first;
-        auto  value=p_walk[name];
+        auto  value=p[name];
         
         auto values=opts[p0].second;
         auto value_count=values.size();
@@ -476,21 +492,26 @@ std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
         
         if (value_index>=value_count)
           continue;
+      
+        p[name]=values[value_index];
+        changes++;
         
-        p_walk[name]=values[value_index];
+        bool valid=valid_config_sgemm(p, true);
+        if(!valid)
+          continue;
         
-//        fprintf(stderr, "change %d, %s from %d to %d\n", changes, name.c_str(), value, values[value_index]);
-        
+        if (changes>=kWalkMinChanges)
+          break;
       }
       
-      auto defines = parameters_to_defines(p_walk);
+      auto defines = parameters_to_defines(p);
+
 //      fprintf(stderr, "new %s \n", defines.c_str());
       
       try {
         auto args = m_opencl.m_cl_args + " " + defines;
         program.build(args.c_str());
       } catch (const cl::Error&) {
-        // Failed to compile, get next parameter
         continue;
       }
       
@@ -529,8 +550,9 @@ std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
         (n_ceil * p["NDIMC"]) / p["NWG"],
         (size_t)batch_size};
       
-      auto sum = 0.0f;
-      auto max_error = 0.0f;
+      double sum = 0;
+      bool error=false;
+      
       for (auto r = 0; r < runs; r++) {
         try {
           queue.enqueueNDRangeKernel(sgemm_kernel, cl::NullRange, size_sgemm,
@@ -544,51 +566,56 @@ std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
           
           auto this_error =
           compare_ref(c, c_ref, n, m, batch_size, n_ceil, m_ceil);
-          max_error = std::max(max_error, this_error);
+          error |= this_error>=kMaxError;
           
           auto elapsed = event.getProfilingInfo<CL_PROFILING_COMMAND_END>() -
           event.getProfilingInfo<CL_PROFILING_COMMAND_START>();
           
           sum += elapsed;
-        } catch (const cl::Error&) {
-          // Failed to enqueue kernel. Set error to max.
-          max_error = MAX_ERROR;
-          break;
+        } catch (const cl::Error& e) {
+          fprintf(stderr, "Error %s\n", e.what());
         }
       }
       
+      if (error)
+        {
+          p=p_old;
+          continue;
+        }
       
-      if (max_error < MAX_ERROR && (march_fastest == 0 || sum < march_fastest)) {
-        auto param_str = parameters_to_string(p);
-        auto kernel_ms = 1e-6f * (sum / runs);
-        // Timing is in nanoseconds (10^-9), Giga = 10^9, so this works out
-        auto kernel_gflops = total_flops / (sum / runs);
-        fprintf(stderr, "march %s %.4f ms (%.1f GFLOPS)\n",  param_str.c_str(), kernel_ms, kernel_gflops);
-        march_fastest = sum;
-        march_best = defines;
-        march_gflops=kernel_gflops;
-        p=p_walk;
+      auto time_us = 1e-3 * (sum / runs);
+      
+      if (walk_best_time_us == 0 || time_us < walk_best_time_us) {
+        walk_best_time_us = time_us;
+        walk_best_params = defines;
+        walk_best_gflops=total_flops / (sum / runs);
+        walk_best_string=parameters_to_string(p);
+        
+        if (best_time_us==0 || walk_best_time_us<best_time_us) {
+          
+          best_time_us=walk_best_time_us;
+          best_params=walk_best_params;
+          best_gflops=walk_best_gflops;
+          best_string=walk_best_string;
+
+        }
+        
       }
+      else p=p_old;
       
     } // march
     
-    auto end=parameters_to_defines(p_walk);
-    fprintf(stderr, "seed end: %s\n",end.c_str());
+    fprintf(stderr, "(%lu/%lu) %s %.4f us (%.1f GFLOPS)\n",
+            seed, kSeeds,
+            best_string.c_str(),
+            best_time_us,
+            best_gflops);
 
-    
-    if (march_fastest>0 && (best_time==0 || march_fastest<best_time)) {
-      
-      best_time=march_fastest;
-      best_params=march_best;
-      best_gflops=march_gflops;
-
-      fprintf(stderr, "seed %s %.4f ms (%.1f GFLOPS)\n",  best_params.c_str(), (best_time/runs), march_gflops);
-    }
     
   } // seed
   
   
-  if (best_time == 0) {
+  if (best_time_us == 0) {
     fprintf(stderr,
             "Failed to find a working configuration.\nCheck your OpenCL "
             "drivers.\n");
@@ -609,7 +636,7 @@ void Tuner::store_sgemm_tuners(const int m, const int n, const int k,
   auto file_contents = std::vector<std::string>();
   {
     // Read the previous contents to string
-    auto file = std::ifstream{TUNER_FILE_LOCAL};
+    auto file = std::ifstream{kTunerFilename};
     if (file.good()) {
       auto line = std::string{};
       while (std::getline(file, line)) {
@@ -617,7 +644,7 @@ void Tuner::store_sgemm_tuners(const int m, const int n, const int k,
       }
     }
   }
-  auto file = std::ofstream{TUNER_FILE_LOCAL};
+  auto file = std::ofstream{kTunerFilename};
 
   auto device_name = m_opencl.get_device_name();
   auto tuning_params = std::stringstream{};
@@ -641,7 +668,7 @@ void Tuner::store_sgemm_tuners(const int m, const int n, const int k,
 
   if (file.fail()) {
     fprintf(stderr, "Could not save the tuning result.\n");
-    fprintf(stderr, "Do I have write permissions on %s?\n", TUNER_FILE_LOCAL.c_str());
+    fprintf(stderr, "Do I have write permissions on %s?\n", kTunerFilename.c_str());
   }
 }
 
@@ -694,7 +721,7 @@ std::string Tuner::sgemm_tuners_from_line(std::string line, const int m,
 std::string Tuner::load_sgemm_tuners(const int m, const int n, const int k,
                                      const int batch_size) {
   if (!m_params.force_tune) {
-    auto file = std::ifstream{TUNER_FILE_LOCAL};
+    auto file = std::ifstream{kTunerFilename};
     if (file.good()) {
       auto line = std::string{};
       while (std::getline(file, line)) {
