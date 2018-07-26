@@ -504,8 +504,6 @@ std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
       }
       
       auto defines = parameters_to_defines(p);
-
-//      fprintf(stderr, "new %s \n", defines.c_str());
       
       try {
         auto args = m_opencl.m_cl_args + " " + defines;
@@ -620,9 +618,7 @@ std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
             "drivers.\n");
     throw std::runtime_error("Tuner failed to find working configuration.");
   }
-  
-  fprintf(stderr, "best: %s at (%.1f GFLOPS)\n", best_params.c_str(), best_gflops);
-  
+    
   return best_params;
 }
 
