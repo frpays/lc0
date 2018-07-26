@@ -182,11 +182,16 @@ static float compare_ref(std::vector<float>& x, std::vector<float>& ref,
 
 std::string Tuner::tune_sgemm(const int m, const int n, const int k,
                               const int batch_size) {
-
-  return tune_sgemm1(m, n, k, batch_size);
+  std::string defines;
+  if (m_params.tune_stochastic)
+    defines = tune_sgemm_stochastic(m, n, k, batch_size);
+  else
+    defines = tune_sgemm_bruteforce(m, n, k, batch_size);
+  return defines;
 }
 
-std::string Tuner::tune_sgemm1(const int m, const int n, const int k,
+
+std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
                               const int batch_size) {
   auto opts = std::vector<Configurations>();
   if (m_params.tune_exhaustive) {
@@ -368,7 +373,7 @@ std::string Tuner::tune_sgemm1(const int m, const int n, const int k,
 }
 
 
-std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
+std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
                                const int batch_size) {
   
   auto opts = std::vector<Configurations>();
@@ -618,7 +623,7 @@ std::string Tuner::tune_sgemm2(const int m, const int n, const int k,
             "drivers.\n");
     throw std::runtime_error("Tuner failed to find working configuration.");
   }
-    
+  
   return best_params;
 }
 

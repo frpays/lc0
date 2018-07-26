@@ -137,6 +137,8 @@ class OpenCLNetwork : public Network {
     params_.tune_only = options.GetOrDefault<bool>("tune_only", false);
     params_.tune_exhaustive =
         options.GetOrDefault<bool>("tune_exhaustive", false);
+    params_.tune_stochastic =
+        options.GetOrDefault<bool>("tune_stochastic", false);
 
     const auto inputChannels = static_cast<size_t>(kInputPlanes);
     const auto channels = weights.input.biases.size();

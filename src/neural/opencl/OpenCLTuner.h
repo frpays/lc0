@@ -40,10 +40,10 @@ class Tuner {
   std::string tune_sgemm(const int m, const int n, const int k,
                          const int batch_size);
   
-  std::string tune_sgemm1(const int m, const int n, const int k,
+  std::string tune_sgemm_bruteforce(const int m, const int n, const int k,
                          const int batch_size);
 
-  std::string tune_sgemm2(const int m, const int n, const int k,
+  std::string tune_sgemm_stochastic(const int m, const int n, const int k,
                          const int batch_size);
   
 
