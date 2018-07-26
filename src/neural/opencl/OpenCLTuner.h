@@ -36,16 +36,14 @@ class Tuner {
   cl::Device m_device;
 
  public:
-  
   std::string tune_sgemm(const int m, const int n, const int k,
                          const int batch_size);
-  
+
   std::string tune_sgemm_bruteforce(const int m, const int n, const int k,
-                         const int batch_size);
+                                    const int batch_size);
 
   std::string tune_sgemm_stochastic(const int m, const int n, const int k,
-                         const int batch_size);
-  
+                                    const int batch_size);
 
   std::string load_sgemm_tuners(const int m, const int n, const int k,
                                 const int batch_size);
@@ -59,7 +57,6 @@ class Tuner {
         m_device(device) {}
 
  private:
-  
   void store_sgemm_tuners(const int m, const int n, const int k,
                           const int batch_size, std::string tuners);
   bool valid_config_sgemm(TuneParameters p, bool exhaustive);
@@ -69,6 +66,4 @@ class Tuner {
                                        const int n);
   std::string sgemm_tuners_from_line(std::string line, const int m, const int n,
                                      const int k, const int batch_size);
-  
-  
 };
