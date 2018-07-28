@@ -91,6 +91,7 @@ files += [
   'src/utils/optionsparser.cc',
   'src/utils/random.cc',
   'src/utils/string.cc',
+  'src/utils/Regress.cc',
   'src/utils/transpose.cc',
 ]
 includes += include_directories('src')

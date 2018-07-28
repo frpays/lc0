@@ -31,11 +31,12 @@
 #include "neural/opencl/OpenCLParams.h"
 #include "neural/opencl/OpenCLTuner.h"
 #include "utils/random.h"
+#include "utils/Regress.h"
 
 const auto kTunerFilename = std::string("leelaz_opencl_tuning");
 
 static constexpr auto kMaxError = 1e-4f;
-static constexpr auto kDefaultRuns = 4;
+static constexpr auto kDefaultRuns = 1;
 static constexpr auto kSeeds = 50;
 static constexpr auto kWalkLength = 50;
 static constexpr auto kWalkMinChanges = 3;
@@ -251,12 +252,30 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
   for (auto i = 0; i < cfgs; i++) {
     TuneParameters param = get_parameters_by_int(opts, i);
     if (valid_config_sgemm(param, m_params.tune_exhaustive)) {
-      if (m_params.tune_exhaustive) {
-        if (lczero::Random::Get().GetInt(0, 16) != 7) continue;
-      }
+  
       valid_params.emplace_back(i);
     }
   }
+  
+  for (auto i = 0; i < cfgs; i++) {
+    TuneParameters param = get_parameters_by_int(opts, i);
+    if (valid_config_sgemm(param, m_params.tune_exhaustive)) {
+
+      valid_params.emplace_back(i);
+    }
+  }
+  
+  
+  for (auto i = 0; i < cfgs; i++) {
+    TuneParameters param = get_parameters_by_int(opts, i);
+    if (valid_config_sgemm(param, m_params.tune_exhaustive)) {
+      
+      valid_params.emplace_back(i);
+    }
+  }
+  
+  auto timings = std::vector<double>{};
+
 
   fprintf(stderr, "Will try %zu valid configurations.\n", valid_params.size());
 
@@ -323,7 +342,8 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
 
     auto sum = 0.0f;
     auto max_error = 0.0f;
-    for (auto r = 0; r < kDefaultRuns; r++) {
+    int runs=0;
+    for (auto r = 0; r < 10; r++) {
       try {
         queue.enqueueNDRangeKernel(sgemm_kernel, cl::NullRange, size_sgemm,
                                    local_sgemm, nullptr, &event);
@@ -341,6 +361,10 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
         auto elapsed = event.getProfilingInfo<CL_PROFILING_COMMAND_END>() -
                        event.getProfilingInfo<CL_PROFILING_COMMAND_START>();
 
+        if (r<5)
+          continue;
+        
+        runs++;
         sum += elapsed;
       } catch (const cl::Error&) {
         // Failed to enqueue kernel. Set error to max.
@@ -348,9 +372,12 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
         break;
       }
     }
+    auto kernel_us = 1e-3 * (sum / (double) runs);
+    timings.emplace_back(kernel_us);
+    
     if (max_error < kMaxError && (best_time == 0 || sum < best_time)) {
       auto param_str = parameters_to_string(p);
-      auto kernel_ms = 1e-6f * (sum / kDefaultRuns);
+      auto kernel_ms = 1e-6f * (sum / runs);
       // Timing is in nanoseconds (10^-9), Giga = 10^9, so this works out
       auto kernel_gflops = total_flops / (sum / kDefaultRuns);
       fprintf(stderr, "(%zu/%zu) %s %.4f ms (%.1f GFLOPS)\n", param_counter,
@@ -365,6 +392,26 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
             "drivers.\n");
     throw std::runtime_error("Tuner failed to find working configuration.");
   }
+  
+  lczero::Regress regress;
+  int siz=timings.size()/3;
+  double max=0;
+  for (int i=0; i<siz; i++) {
+    
+    double pt1=timings[i];
+    double pt2=timings[i+siz];
+    double pt3=timings[i+siz+siz];
+
+    double x=0.5*(pt2+pt3);
+    double y=std::abs(pt3-pt2);
+    double delta=y;
+    regress.add(x, y);
+    fprintf(stderr," %f %f %f delta= %f\n", pt1, pt2, pt3, delta);
+    max=std::max(delta, max);
+  }
+  fprintf(stderr," max= %f\n", max);
+  regress.compute();
+ regress.dump();
   return best_params;
 }
 
@@ -578,7 +625,7 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
         p = p_old;
         continue;
       }
-              
+      
       auto time_us = 1e-3 * (sum / runs);
 
       if (walk_best_time_us == 0 || time_us < walk_best_time_us) {
