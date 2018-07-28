@@ -16,7 +16,6 @@
  along with Leela Zero.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -24,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -33,7 +33,6 @@
 #include "neural/opencl/OpenCL.h"
 #include "neural/opencl/OpenCLParams.h"
 #include "neural/opencl/OpenCLTuner.h"
-
 
 static std::string cl_args =
     "-cl-mad-enable -cl-fast-relaxed-math -cl-no-signed-zeros "
@@ -85,7 +84,7 @@ thread_local ThreadData opencl_thread_data;
 
 void OpenCL::ensure_thread_initialized() {
   if (!opencl_thread_data.m_is_initialized) {
-    // Make kernels
+    // Make kernels.
     opencl_thread_data.m_convolve1_kernel = cl::Kernel(m_program, "convolve1");
     opencl_thread_data.m_merge_kernel = cl::Kernel(m_program, "merge_bn");
     opencl_thread_data.m_in_transform_kernel =
@@ -249,8 +248,8 @@ void OpenCL_Network::forward(const std::vector<net_t>& input,
                              CL_MAP_READ, 0, finalSize_val);
 
   {
-    // Finish call is usually a busy wait. When using multiple threads
-    // use the lock to avoid busy waiting with all threads.
+    // Finish call is usually a busy wait. When using multiple threads.
+    // Use the lock to avoid busy waiting with all threads.
     std::lock_guard<std::mutex> lock(m_queue_finish_mutex);
     queue.finish();
   }
@@ -359,7 +358,7 @@ void OpenCL_Network::convolve3(int channels, int outputs, cl::Buffer& bufferIn,
       out_transform_bn_in_kernel.setArg(3, outputs);
       out_transform_bn_in_kernel.setArg(4, m_ceil);
       out_transform_bn_in_kernel.setArg(5, n_ceil);
-      // k_ceil of the next convolution
+      // k_ceil of the next convolution.
       auto k_ceil2 = int(ceilMultiple(ceilMultiple(outputs, kwg), vwm));
       out_transform_bn_in_kernel.setArg(6, k_ceil2);
       if (bufferResidual) {
@@ -404,13 +403,13 @@ void OpenCL_Network::convolve1(int channels, int outputs,
                                cl::Buffer& bufferOutput,
                                cl::Buffer& bufferMerge,
                                weight_slice_t weights) const {
-  // fixed for 8x8
+  // fixed for 8x8.
   constexpr int width = 8;
   constexpr int height = 8;
   constexpr int boardsize = width * height;
   constexpr int rowTiles = 8;
 
-  // Input channel grouping in multiples of 8
+  // Input channel grouping in multiples of 8.
   constexpr int channelGroup = 8;
   constexpr int channelShift = 3;
   constexpr int rowGroup = 1;
@@ -419,15 +418,15 @@ void OpenCL_Network::convolve1(int channels, int outputs,
   auto m_convolve_kernel = &opencl_thread_data.m_convolve1_kernel;
 
 #ifndef NDEBUG
-  // Total output size after reducing
+  // Total output size after reducing.
   size_t outSize = width * height * outputs * sizeof(net_t);
 
-  // Produce channel * output planes and merge them at the end
+  // Produce channel * output planes and merge them at the end.
   size_t mergeSize = (channels >> channelShift) * outSize;
   assert(mergeSize <= bufferMerge.getInfo<CL_MEM_SIZE>());
 #endif
 
-  // Copy the rows locally
+  // Copy the rows locally.
   size_t stripSize = width * sizeof(float);
 
   int rowBuffer = std::min<int>(channelGroup, 7);
@@ -479,7 +478,7 @@ void OpenCL_Network::innerproduct(cl::Buffer& input, weight_slice_t weights,
   auto sgemv_kernel = opencl_thread_data.m_sgemv_kernel;
   cl::CommandQueue& queue = opencl_thread_data.m_commandqueue;
 
-  // TODO: Tune these
+  // TODO: Tune these.
   size_t wgs1 = 64;
   size_t wpt1 = 1;
 
@@ -488,7 +487,7 @@ void OpenCL_Network::innerproduct(cl::Buffer& input, weight_slice_t weights,
   auto local_size = wgs1;
 
   try {
-    // Sets the kernel arguments
+    // Sets the kernel arguments.
     sgemv_kernel.setArg(0, static_cast<int>(outputs));
     sgemv_kernel.setArg(1, static_cast<int>(inputs));
     sgemv_kernel.setArg(2, weights[0]);
@@ -524,7 +523,7 @@ static std::string opencl_dev_type_to_string(T type) {
   }
 }
 
-static const char *trim_left(const char *trim_me) {
+static const char* trim_left(const char* trim_me) {
   while (isspace(*trim_me)) trim_me++;
   return trim_me;
 }
@@ -623,13 +622,13 @@ std::vector<size_t> OpenCL::get_sgemm_tuners(void) {
 void OpenCL::initialize(const int channels, const OpenCLParams& params) {
   bool verbose = params.verbose;
   if (verbose) {
-    fprintf(stderr, "Initializing OpenCL.\n");
+    std::cerr << "Initializing OpenCL." << std::endl;
   }
   std::vector<cl::Platform> platforms;
   try {
     cl::Platform::get(&platforms);
   } catch (const cl::Error& e) {
-    fprintf(stderr, "OpenCL: %s\n", e.what());
+    std::cerr << "OpenCL: " << e.what() << std::endl;
     throw;
   }
 
@@ -642,7 +641,8 @@ void OpenCL::initialize(const int channels, const OpenCLParams& params) {
   auto id = 0;
 
   if (verbose) {
-    fprintf(stderr, "Detected %zu OpenCL platforms.\n", platforms.size());
+    std::cerr << "Detected " << platforms.size() << " OpenCL platforms."
+              << std::endl;
   }
 
   for (const auto& p : platforms) {
@@ -651,11 +651,10 @@ void OpenCL::initialize(const int channels, const OpenCLParams& params) {
       std::string platprof = p.getInfo<CL_PLATFORM_PROFILE>();
       std::string platname = p.getInfo<CL_PLATFORM_NAME>();
       std::string platvend = p.getInfo<CL_PLATFORM_VENDOR>();
-      fprintf(stderr, "Platform version: %s\n", platvers.c_str());
-      ;
-      fprintf(stderr, "Platform profile: %s\n", platprof.c_str());
-      fprintf(stderr, "Platform name:    %s\n", platname.c_str());
-      fprintf(stderr, "Platform vendor:  %s\n", platvend.c_str());
+      std::cerr << "Platform version: " << platvers << std::endl;
+      std::cerr << "Platform profile: " << platprof << std::endl;
+      std::cerr << "Platform name:    " << platname << std::endl;
+      std::cerr << "Platform vendor:  " << platvend << std::endl;
     }
 
     std::istringstream versstream(platvers);
@@ -667,37 +666,45 @@ void OpenCL::initialize(const int channels, const OpenCLParams& params) {
     try {
       p.getDevices(CL_DEVICE_TYPE_ALL, &devices);
     } catch (const cl::Error& e) {
-      fprintf(stderr, "Error getting device(s): %s: %d\n", e.what(), e.err());
+      std::cerr << "Error getting device(s): " << e.what() << ": " << e.err()
+                << std::endl;
       devices.clear();
     }
     for (auto& d : devices) {
       if (verbose) {
-        fprintf(stderr, "Device ID:     %d\n", id);
-        fprintf(stderr, "Device name:   %s\n",
-               trim_left(d.getInfo<CL_DEVICE_NAME>().c_str()));
-        fprintf(stderr, "Device type:   %s\n",
-               opencl_dev_type_to_string(d.getInfo<CL_DEVICE_TYPE>()).c_str());
-        fprintf(stderr, "Device vendor: %s\n", d.getInfo<CL_DEVICE_VENDOR>().c_str());
-        fprintf(stderr, "Device driver: %s\n", d.getInfo<CL_DRIVER_VERSION>().c_str());
-        fprintf(stderr, "Device speed:  %u MHz\n",
-               d.getInfo<CL_DEVICE_MAX_CLOCK_FREQUENCY>());
-        fprintf(stderr, "Device cores:  %u CU\n",
-               d.getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>());
+        std::cerr << "Device ID:      " << id << std::endl;
+        std::cerr << "Device name:    "
+                  << trim_left(d.getInfo<CL_DEVICE_NAME>().c_str())
+                  << std::endl;
+        std::cerr << "Device type:    "
+                  << opencl_dev_type_to_string(d.getInfo<CL_DEVICE_TYPE>())
+                  << std::endl;
+        std::cerr << "Device vendor:  " << d.getInfo<CL_DEVICE_VENDOR>()
+                  << std::endl;
+        std::cerr << "Device driver:  " << d.getInfo<CL_DRIVER_VERSION>()
+                  << std::endl;
+        std::cerr << "Device speed:   "
+                  << d.getInfo<CL_DEVICE_MAX_CLOCK_FREQUENCY>() << " MHZ"
+                  << std::endl;
+        std::cerr << "Device cores:   "
+                  << d.getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>() << " CU"
+                  << std::endl;
       }
 
-      // assign score, try to find best device
+      // Assign score, try to find best device.
       int this_score = 0;
       std::string this_vendor = d.getInfo<CL_DEVICE_VENDOR>();
-      std::transform(this_vendor.begin(), this_vendor.end(), this_vendor.begin(), ::tolower);
-      this_score +=
-          1000 * (this_vendor.find("advanced micro devices") != std::string::npos);
+      std::transform(this_vendor.begin(), this_vendor.end(),
+                     this_vendor.begin(), ::tolower);
+      this_score += 1000 * (this_vendor.find("advanced micro devices") !=
+                            std::string::npos);
       this_score += 1000 * (this_vendor.find("amd") != std::string::npos);
       this_score += 1000 * (this_vendor.find("nvidia") != std::string::npos);
       this_score += 500 * (this_vendor.find("intel") != std::string::npos);
       this_score += 100 * (d.getInfo<CL_DEVICE_TYPE>() == CL_DEVICE_TYPE_GPU);
       this_score += opencl_version * 10;
       if (verbose) {
-        fprintf(stderr, "Device score:  %d\n", this_score);
+        std::cerr << "Device score:   " << this_score << std::endl;
       }
 
       bool preferred = params.gpuId == id;
@@ -723,30 +730,34 @@ void OpenCL::initialize(const int channels, const OpenCLParams& params) {
   }
 
   if (verbose) {
-    fprintf(stderr, "Selected platform: %s\n",
-           best_platform.getInfo<CL_PLATFORM_NAME>().c_str());
-    fprintf(stderr, "Selected device: %s\n",
-           trim_left(best_device.getInfo<CL_DEVICE_NAME>().c_str()));
-    fprintf(stderr, "with OpenCL %2.1f capability.\n", best_version);
+    std::cerr << "Selected platform: "
+              << best_platform.getInfo<CL_PLATFORM_NAME>() << std::endl;
+    std::cerr << "Selected device: "
+              << trim_left(best_device.getInfo<CL_DEVICE_NAME>().c_str())
+              << std::endl;
+    std::cerr << "with OpenCL " << std::fixed << std::setprecision(1)
+              << best_version << " capability." << std::endl;
   }
   cl::Context context;
   try {
     context = cl::Context(best_device);
   } catch (const cl::Error& e) {
-    fprintf(stderr, "Error creating OpenCL context: %s: %d", e.what(), e.err());
+    std::cerr << "Error creating OpenCL context: " << e.what() << ": "
+              << e.err() << std::endl;
     throw std::runtime_error("Error creating OpenCL context.");
   }
   m_context = context;
   m_device = best_device;
 
-  // Make program of the source code in the context
+  // Make program of the source code in the context.
   try {
     m_program =
         cl::Program(m_context, sourceCode_config + sourceCode_convolve1 +
                                    sourceCode_convolve3 + sourceCode_sgemm +
                                    sourceCode_sgemv);
   } catch (const cl::Error& e) {
-    fprintf(stderr, "Error getting kernels: %s: %d", e.what(), e.err());
+    std::cerr << "Error getting kernels: " << e.what() << ": " << e.err()
+              << std::endl;
     throw std::runtime_error("Error getting OpenCL kernels.");
   }
 
@@ -756,14 +767,15 @@ void OpenCL::initialize(const int channels, const OpenCLParams& params) {
   auto sgemm_tuners =
       t.load_sgemm_tuners(channels, WINOGRAD_P, channels, WINOGRAD_TILE);
 
-  // Build program for these specific devices
+  // Build program for these specific devices.
   try {
     std::string args = cl_args;
     args += sgemm_tuners;
     m_program.build(args.c_str());
   } catch (const cl::Error&) {
-    fprintf(stderr, "Error building kernels: %s\n",
-           m_program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(m_device).c_str());
+    std::cerr << "Error building kernels: "
+              << m_program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(m_device) << "."
+              << std::endl;
     throw std::runtime_error("Error building OpenCL kernels.");
   }
 
@@ -775,19 +787,19 @@ void OpenCL::initialize(const int channels, const OpenCLParams& params) {
           .getWorkGroupInfo<CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE>(
               best_device);
   if (verbose) {
-    fprintf(stderr, "Wavefront/Warp size: %zu\n", m_wavefront_size);
+    std::cerr << "Wavefront/Warp size: " << m_wavefront_size << std::endl;
   }
 
   m_max_workgroup_size = best_device.getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>();
   m_max_workgroup_dims = best_device.getInfo<CL_DEVICE_MAX_WORK_ITEM_SIZES>();
 
   if (verbose) {
-    fprintf(stderr, "Max workgroup size: %zu\n", m_max_workgroup_size);
-    fprintf(stderr, "Max workgroup dimensions: ");
+    std::cerr << "Max workgroup size: " << m_max_workgroup_size << std::endl;
+    std::cerr << "Max workgroup dimensions: ";
     for (auto d : m_max_workgroup_dims) {
-      fprintf(stderr, "%zu ", d);
+      std::cerr << d << " ";
     }
-    fprintf(stderr, "\n");
+    std::cerr << std::endl;
   }
   m_init_ok = true;
 }

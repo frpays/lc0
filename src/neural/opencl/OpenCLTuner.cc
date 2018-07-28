@@ -20,6 +20,7 @@
 #include <cassert>
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <random>
@@ -245,7 +246,7 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
   auto cBuffer = cl::Buffer(m_context, CL_MEM_READ_WRITE,
                             sizeof(float) * c_size, nullptr, nullptr);
 
-  fprintf(stderr, "\nStarted OpenCL SGEMM tuner.\n");
+  std::cerr << "Started OpenCL SGEMM tuner." << std::endl;
 
   auto valid_params = std::vector<int>{};
   auto cfgs = 1;
@@ -263,7 +264,8 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
     }
   }
 
-  fprintf(stderr, "Will try %zu valid configurations.\n", valid_params.size());
+  std::cerr << "Will try " << valid_params.size() << " valid configurations."
+            << std::endl;
 
   std::string best_params;
   auto best_time = unsigned{0};
@@ -287,7 +289,7 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
       auto args = m_opencl.m_cl_args + " " + defines;
       program.build(args.c_str());
     } catch (const cl::Error&) {
-      // Failed to compile, get next parameter
+      // Failed to compile, get next parameter.
       continue;
     }
 
@@ -356,18 +358,19 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
     if (max_error < kMaxError && (best_time == 0 || sum < best_time)) {
       auto param_str = parameters_to_string(p);
       auto kernel_us = 1e-3f * (sum / kDefaultRuns);
-      // Timing is in nanoseconds (10^-9), Giga = 10^9, so this works out
+      // Timing is in nanoseconds (10^-9), Giga = 10^9, so this works out.
       auto kernel_gflops = total_flops / (sum / kDefaultRuns);
-      fprintf(stderr, "(%zu/%zu) %s %.1f us (%.1f GFLOPS)\n", param_counter,
-              valid_params.size(), param_str.c_str(), kernel_us, kernel_gflops);
+      std::cerr << std::fixed << std::setprecision(1) << "(" << param_counter
+                << "/" << valid_params.size() << ") " << param_str << " "
+                << kernel_us << " us (" << kernel_gflops << " GFLOPS)"
+                << std::endl;
       best_time = sum;
       best_params = defines;
     }
   }
   if (best_time == 0) {
-    fprintf(stderr,
-            "Failed to find a working configuration.\nCheck your OpenCL "
-            "drivers.\n");
+    std::cerr << "Failed to find a working configuration." << std::endl
+              << "Check your OpenCL drivers." << std::endl;
     throw std::runtime_error("Tuner failed to find working configuration.");
   }
   return best_params;
@@ -424,13 +427,13 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
   auto cBuffer = cl::Buffer(m_context, CL_MEM_READ_WRITE,
                             sizeof(float) * c_size, nullptr, nullptr);
 
-  fprintf(stderr, "\nStarted OpenCL SGEMM tuner.\n");
+  std::cerr << "Started OpenCL SGEMM tuner" << std::endl;
 
   size_t cfgs = 1;
   for (auto c = size_t{0}; c < opts.size(); c++) {
     cfgs *= opts[c].second.size();
   }
-  fprintf(stderr, "Total %lu configurations\n", cfgs);
+  std::cerr << "Total " << cfgs << " configurations" << std::endl;
 
   std::string best_params;
   std::string best_string;
@@ -543,8 +546,8 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
       double sum = 0;
       bool error = false;
 
-      int runs=0;
-      while (runs<kAccuracyRuns) {
+      int runs = 0;
+      while (runs < kAccuracyRuns) {
         try {
           queue.enqueueNDRangeKernel(sgemm_kernel, cl::NullRange, size_sgemm,
                                      local_sgemm, nullptr, &event);
@@ -565,29 +568,24 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
           sum += elapsed;
           runs++;
 
-          /*
-          if (best_time_us>0) {
-            
-            double time_us=1e-3*sum/runs;
-            double error_us=(kMaxTimingErrorRate*time_us+kMaxTimingErrorUs)/std::sqrt(runs);
+          if (best_time_us > 0) {
+            double time_us = 1e-3 * sum / runs;
+            double error_us =
+                (kMaxTimingErrorRate * time_us + kMaxTimingErrorUs) /
+                std::sqrt(runs);
             // If we cannot be stastistically faster, give up.
-            if (time_us-error_us>best_time_us)
-              break;
-            
+            if (time_us - error_us > best_time_us) break;
           }
-           */
-          
+
         } catch (const cl::Error& e) {
-//          fprintf(stderr, "Error %s\n", e.what());
         }
       }
-   //   fprintf(stderr,"     %d   %s\n", runs, parameters_to_string(p).c_str());
 
       if (error) {
         p = p_old;
         continue;
       }
-              
+
       auto time_us = 1e-3 * (sum / runs);
 
       if (walk_best_time_us == 0 || time_us < walk_best_time_us) {
@@ -608,15 +606,15 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
 
     }  // march
 
-    fprintf(stderr, "(%lu/%lu) %s %.1f us (%.1f GFLOPS)\n", seed, kSeeds,
-            best_string.c_str(), best_time_us, best_gflops);
+    std::cerr << std::fixed << std::setprecision(1) << "(" << seed << "/"
+              << kSeeds << ") " << best_string << " " << best_time_us << " us ("
+              << best_gflops << " GFLOPS)" << std::endl;
 
   }  // seed
 
   if (best_time_us == 0) {
-    fprintf(stderr,
-            "Failed to find a working configuration.\nCheck your OpenCL "
-            "drivers.\n");
+    std::cerr << "Failed to find a working configuration." << std::endl
+              << "Check your OpenCL drivers." << std::endl;
     throw std::runtime_error("Tuner failed to find working configuration.");
   }
 
@@ -627,7 +625,7 @@ void Tuner::store_sgemm_tuners(const int m, const int n, const int k,
                                const int batch_size, std::string tuners) {
   auto file_contents = std::vector<std::string>();
   {
-    // Read the previous contents to string
+    // Read the previous contents to string.
     auto file = std::ifstream{kTunerFilename};
     if (file.good()) {
       auto line = std::string{};
@@ -647,7 +645,7 @@ void Tuner::store_sgemm_tuners(const int m, const int n, const int k,
   auto tuning_line = tuning_line_prefix + tuners + ";" + device_name;
 
   // Write back previous data as long as it's not the device and
-  // tuning we just tuned
+  // tuning we just tuned.
   for (const auto& line : file_contents) {
     if (line.find(tuning_line_prefix) == std::string::npos ||
         line.find(device_name) == std::string::npos) {
@@ -655,13 +653,13 @@ void Tuner::store_sgemm_tuners(const int m, const int n, const int k,
     }
   }
 
-  // Write new tuning
+  // Write new tuning.
   file << tuning_line << std::endl;
 
   if (file.fail()) {
-    fprintf(stderr, "Could not save the tuning result.\n");
-    fprintf(stderr, "Do I have write permissions on %s?\n",
-            kTunerFilename.c_str());
+    std::cerr << "Could not save the tuning result." << std::endl;
+    std::cerr << "Do I have write permissions on " << kTunerFilename
+              << std::endl;
   }
 }
 
@@ -721,7 +719,7 @@ std::string Tuner::load_sgemm_tuners(const int m, const int n, const int k,
         auto tuners = sgemm_tuners_from_line(line, m, n, k, batch_size);
         if (tuners.size() != 0) {
           if (m_params.verbose) {
-            fprintf(stderr, "Loaded existing SGEMM tuning.\n");
+            std::cerr << "Loaded existing SGEMM tuning." << std::endl;
           }
           return tuners;
         }
@@ -732,8 +730,8 @@ std::string Tuner::load_sgemm_tuners(const int m, const int n, const int k,
   auto tuners = tune_sgemm(m, n, k, batch_size);
   store_sgemm_tuners(m, n, k, batch_size, tuners);
 
-  // Exit immediately after tuning. Some NVIDIA drivers are buggy
-  // and will fail to compile the rest of the kernels after a tuning
+  // Exit immediately after tuning. Some NVIDIA drivers are buggy,
+  // and will fail to compile the rest of the kernels after a tuning,
   // run. See #729.
   if (m_params.tune_only) {
     exit(EXIT_SUCCESS);
