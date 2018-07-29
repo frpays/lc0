@@ -65,34 +65,34 @@ static void sgemmBatched_ref(const std::vector<float>& a,
 
 static bool IsMultiple(const size_t a, const size_t b) { return (a % b == 0); }
 
-bool Tuner::valid_config_sgemm(TuneParameters p, bool exhaustive) {
-  if (!IsMultiple(p["MWG"], p["MDIMC"] * p["VWM"])) {
+bool Tuner::valid_config_sgemm(const TuneParameters& p, bool exhaustive) {
+  if (!IsMultiple(p.at("MWG"), p.at("MDIMC") * p.at("VWM"))) {
     return false;
   }
-  if (!IsMultiple(p["NWG"], p["NDIMC"] * p["VWN"])) {
+  if (!IsMultiple(p.at("NWG"), p.at("NDIMC") * p.at("VWN"))) {
     return false;
   }
-  if (!IsMultiple(p["MWG"], p["MDIMA"] * p["VWM"])) {
+  if (!IsMultiple(p.at("MWG"), p.at("MDIMA") * p.at("VWM"))) {
     return false;
   }
-  if (!IsMultiple(p["NWG"], p["NDIMB"] * p["VWN"])) {
+  if (!IsMultiple(p.at("NWG"), p.at("NDIMB") * p.at("VWN"))) {
     return false;
   }
-  if (!IsMultiple(p["KWG"], p["MDIMC"] * p["NDIMC"] / p["MDIMA"])) {
+  if (!IsMultiple(p.at("KWG"), p.at("MDIMC") * p.at("NDIMC") / p.at("MDIMA"))) {
     return false;
   }
-  if (!IsMultiple(p["KWG"], p["MDIMC"] * p["NDIMC"] / p["NDIMB"])) {
+  if (!IsMultiple(p.at("KWG"), p.at("MDIMC") * p.at("NDIMC") / p.at("NDIMB"))) {
     return false;
   }
   // Extra restrictions for a fast tuning run
   if (!exhaustive) {
-    if (p["MDIMC"] != p["MDIMA"]) {
+    if (p.at("MDIMC") != p.at("MDIMA")) {
       return false;
     }
-    if (p["NDIMC"] != p["NDIMB"]) {
+    if (p.at("NDIMC") != p.at("NDIMB")) {
       return false;
     }
-    if (p["SA"] != p["SB"]) {
+    if (p.at("SA") != p.at("SB")) {
       return false;
     }
   }

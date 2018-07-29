@@ -59,7 +59,7 @@ class Tuner {
  private:
   void store_sgemm_tuners(const int m, const int n, const int k,
                           const int batch_size, std::string tuners);
-  bool valid_config_sgemm(TuneParameters p, bool exhaustive);
+  bool valid_config_sgemm(const TuneParameters& p, bool exhaustive);
   std::string parameters_to_defines(const TuneParameters& p);
   std::string parameters_to_string(const TuneParameters& p);
   TuneParameters get_parameters_by_int(const std::vector<Configurations>& opts,
