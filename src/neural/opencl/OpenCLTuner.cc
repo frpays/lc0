@@ -380,21 +380,11 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
                                          const int batch_size) {
   auto opts = std::vector<Configurations>();
   opts = {
-      {"MWG", {16, 32, 64}},
-      {"NWG", {16, 32, 64}},
-      {"KWG", {16, 32}},
-      {"MDIMC", {8, 16, 32}},
-      {"NDIMC", {8, 16, 32}},
-      {"MDIMA", {8, 16, 32}},
-      {"NDIMB", {8, 16, 32}},
-      {"KWI", {2, 8}},
-      {"VWM", {2, 4}},
-      {"VWN", {2, 4}},
-      {"STRM", {0}},
-      {"STRN", {0}},
-      {"SA", {1}},
-      {"SB", {1}},
-  };
+      {"MWG", {16, 32, 64}},  {"NWG", {16, 32, 64}},  {"KWG", {16, 32}},
+      {"MDIMC", {8, 16, 32}}, {"NDIMC", {8, 16, 32}}, {"MDIMA", {8, 16, 32}},
+      {"NDIMB", {8, 16, 32}}, {"KWI", {2, 8}},        {"VWM", {1, 2, 4, 8}},
+      {"VWN", {1, 2, 4, 8}},  {"STRM", {0, 1}},       {"STRN", {0, 1}},
+      {"SA", {0, 1}},         {"SB", {0, 1}}};
 
   // This needs to be at minimum the maximum (MNK/WG) values above.
   auto m_max = std::max(64, m);
