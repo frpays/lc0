@@ -278,6 +278,9 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
   auto cBuffer = cl::Buffer(m_context, CL_MEM_READ_WRITE,
                             sizeof(float) * c_size, nullptr, nullptr);
 
+  std::cerr << "Started OpenCL SGEMM tuner with batch size " << batch_size
+            << "." << std::endl;
+
   auto valid_params = std::vector<int>{};
   auto cfgs = 1;
   for (auto c = size_t{0}; c < opts.size(); c++) {
@@ -708,7 +711,7 @@ void Tuner::store_sgemm_tuners(const int m, const int n, const int k,
   if (file.fail()) {
     std::cerr << "Could not save the tuning result." << std::endl;
     std::cerr << "Do I have write permissions on " << kTunerFilename
-              << std::endl;
+              << "?" << std::endl;
   }
 }
 
@@ -768,7 +771,8 @@ std::string Tuner::load_sgemm_tuners(const int m, const int n, const int k,
         auto tuners = sgemm_tuners_from_line(line, m, n, k, batch_size);
         if (tuners.size() != 0) {
           if (m_params.verbose) {
-            std::cerr << "Loaded existing SGEMM tuning." << std::endl;
+            std::cerr << "Loaded existing SGEMM tuning for batch_size "
+                      << batch_size << "." << std::endl;
           }
           return tuners;
         }
