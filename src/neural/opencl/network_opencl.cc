@@ -135,10 +135,47 @@ class OpenCLNetwork : public Network {
     params_.verbose = options.GetOrDefault<bool>("verbose", true);
     params_.force_tune = options.GetOrDefault<bool>("force_tune", false);
     params_.tune_only = options.GetOrDefault<bool>("tune_only", false);
-    params_.tune_exhaustive =
-        options.GetOrDefault<bool>("tune_exhaustive", false);
-    params_.tune_stochastic =
-        options.GetOrDefault<bool>("tune_stochastic", false);
+    if (options.GetOrDefault<bool>("tune_exhaustive", false))
+      params_.tune_effort = kTuneEffortSlowest;
+        
+    if (options.HasSubdict("tune")) {
+      auto tune_options = options.GetSubdict("tune");
+      if (tune_options.HasSubdict("help")) {
+        std::cerr << "OpenCL tune options are:" << std::endl
+                  << "* Effort:" << std::endl
+                  << "tune(fast): faster tuning." << std::endl
+                  << "tune(normal): normal tuning." << std::endl
+                  << "tune(slower): slower tuning." << std::endl
+                  << "tune(slowest): slowest tuning." << std::endl
+                  << "* Algo:" << std::endl
+                  << "tune(stochastic): default." << std::endl
+                  << "tune(systematic): former algorithm." << std::endl
+                  << "* Misc.:" << std::endl
+                  << "tune(force): force tuning even if exist in the file."
+                  << std::endl
+                  << "tune(only): exist after tuning." << std::endl;
+      }
+
+      // Misc.
+      if (tune_options.HasSubdict("force")) params_.force_tune = true;
+      if (tune_options.HasSubdict("only")) params_.tune_only = true;
+
+      // Tune algo.
+      if (tune_options.HasSubdict("stochastic"))
+        params_.tune_algo = kTuneAlgoStochastic;
+      if (tune_options.HasSubdict("systematic"))
+        params_.tune_algo = kTuneAlgoSystematic;
+
+      // Tune effort.
+      if (tune_options.HasSubdict("fast"))
+        params_.tune_effort = kTuneEffortFast;
+      if (tune_options.HasSubdict("normal"))
+        params_.tune_effort = kTuneEffortNormal;
+      if (tune_options.HasSubdict("slower"))
+        params_.tune_effort = kTuneEffortSlower;
+      if (tune_options.HasSubdict("slowest"))
+        params_.tune_effort = kTuneEffortSlowest;
+    }
 
     const auto inputChannels = static_cast<size_t>(kInputPlanes);
     const auto channels = weights.input.biases.size();

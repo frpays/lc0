@@ -18,13 +18,22 @@
 
 #pragma once
 
+enum OpenCLTuneAlgo { kTuneAlgoStochastic = 0, kTuneAlgoSystematic };
+
+enum OpenCLTuneEffort {
+  kTuneEffortFast = 0,
+  kTuneEffortNormal,
+  kTuneEffortSlower,
+  kTuneEffortSlowest,
+};
+
 struct OpenCLParams {
   int gpuId = -1;
 
   bool verbose = false;
   bool tune_only = false;
   bool force_tune = false;
-  bool tune_exhaustive = false;
-  bool tune_stochastic = false;
 
+  OpenCLTuneAlgo tune_algo = kTuneAlgoStochastic;
+  OpenCLTuneEffort tune_effort = kTuneEffortNormal;
 };

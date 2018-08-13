@@ -36,18 +36,20 @@
 const auto kTunerFilename = std::string("leelaz_opencl_tuning");
 
 static constexpr auto kMaxError = 1e-4f;
-static constexpr auto kDefaultRuns = 4;
-static constexpr auto kSeeds = 50;
-static constexpr auto kWalkLength = 50;
-static constexpr auto kWalkMinChanges = 3;
+static constexpr auto kSeeds = 40;
+static constexpr auto kWalkLength = 40;
+static constexpr auto kWalkMinChanges = 5;
 
 // The timing error as been measured to be about 1 to 2% with
 // not intercept.
 
-constexpr auto kMaxTimingErrorRate = 0.05;
-constexpr auto kMaxTimingErrorUs = 2;
+static constexpr auto kMaxTimingErrorRate = 0.05;
+static constexpr auto kMaxTimingErrorUs = 2;
 
+static constexpr auto kIgnoreRuns = 1;
+static constexpr auto kDefaultRuns = 4;
 static constexpr auto kAccuracyRuns = 16;
+
 
 static void sgemmBatched_ref(const std::vector<float>& a,
                              const std::vector<float>& b, std::vector<float>& c,
@@ -186,32 +188,62 @@ static float compare_ref(std::vector<float>& x, std::vector<float>& ref,
 
 std::string Tuner::tune_sgemm(const int m, const int n, const int k,
                               const int batch_size) {
+  std::cerr << "Started OpenCL SGEMM tuner." << std::endl;
   std::string defines;
-  if (m_params.tune_stochastic)
-    defines = tune_sgemm_stochastic(m, n, k, batch_size);
-  else
-    defines = tune_sgemm_bruteforce(m, n, k, batch_size);
+  switch (m_params.tune_algo) {
+    case kTuneAlgoSystematic:
+      defines = tune_sgemm_bruteforce(m, n, k, batch_size);
+      break;
+    case kTuneAlgoStochastic:
+      defines = tune_sgemm_stochastic(m, n, k, batch_size);
+      break;
+  }
   return defines;
 }
 
 std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
                                          const int batch_size) {
+  bool large_set = false;
+  int skip = 0;
+
   auto opts = std::vector<Configurations>();
-  if (m_params.tune_exhaustive) {
+  switch (m_params.tune_effort) {
+    case kTuneEffortFast:
+      large_set = false;
+      skip = 4;
+      break;
+
+    case kTuneEffortNormal:
+      large_set = false;
+      skip = 0;
+      break;
+
+    case kTuneEffortSlower:
+      large_set = true;
+      skip = 4;
+      break;
+
+    case kTuneEffortSlowest:
+      large_set = true;
+      skip = 16;
+      break;
+  }
+
+  if (large_set) {
     opts = {
-        {"MWG", {16, 32, 64}},  {"NWG", {16, 32, 64}},  {"KWG", {16, 32}},
-        {"MDIMC", {8, 16, 32}}, {"NDIMC", {8, 16, 32}}, {"MDIMA", {8, 16, 32}},
-        {"NDIMB", {8, 16, 32}}, {"KWI", {2, 8}},        {"VWM", {1, 2, 4, 8}},
-        {"VWN", {1, 2, 4, 8}},  {"STRM", {0, 1}},       {"STRN", {0, 1}},
-        {"SA", {0, 1}},         {"SB", {0, 1}},
+      {"MWG", {16, 32, 64}},  {"NWG", {16, 32, 64}},  {"KWG", {16, 32}},
+      {"MDIMC", {8, 16, 32}}, {"NDIMC", {8, 16, 32}}, {"MDIMA", {8, 16, 32}},
+      {"NDIMB", {8, 16, 32}}, {"KWI", {2, 8}},        {"VWM", {1, 2, 4, 8}},
+      {"VWN", {1, 2, 4, 8}},  {"STRM", {0, 1}},       {"STRN", {0, 1}},
+      {"SA", {0, 1}},         {"SB", {0, 1}},
     };
   } else {
     opts = {
-        {"MWG", {16, 32, 64}},  {"NWG", {16, 32, 64}},  {"KWG", {32}},
-        {"MDIMC", {8, 16, 32}}, {"NDIMC", {8, 16, 32}}, {"MDIMA", {8, 16, 32}},
-        {"NDIMB", {8, 16, 32}}, {"KWI", {2}},           {"VWM", {1, 2, 4}},
-        {"VWN", {1, 2, 4}},     {"STRM", {0}},          {"STRN", {0}},
-        {"SA", {0, 1}},         {"SB", {0, 1}},
+      {"MWG", {16, 32, 64}},  {"NWG", {16, 32, 64}},  {"KWG", {32}},
+      {"MDIMC", {8, 16, 32}}, {"NDIMC", {8, 16, 32}}, {"MDIMA", {8, 16, 32}},
+      {"NDIMB", {8, 16, 32}}, {"KWI", {2}},           {"VWM", {1, 2, 4}},
+      {"VWN", {1, 2, 4}},     {"STRM", {0}},          {"STRN", {0}},
+      {"SA", {0, 1}},         {"SB", {0, 1}},
     };
   }
 
@@ -246,8 +278,6 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
   auto cBuffer = cl::Buffer(m_context, CL_MEM_READ_WRITE,
                             sizeof(float) * c_size, nullptr, nullptr);
 
-  std::cerr << "Started OpenCL SGEMM tuner." << std::endl;
-
   auto valid_params = std::vector<int>{};
   auto cfgs = 1;
   for (auto c = size_t{0}; c < opts.size(); c++) {
@@ -256,10 +286,8 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
 
   for (auto i = 0; i < cfgs; i++) {
     TuneParameters param = get_parameters_by_int(opts, i);
-    if (valid_config_sgemm(param, m_params.tune_exhaustive)) {
-      if (m_params.tune_exhaustive) {
-        if (lczero::Random::Get().GetInt(0, 16) != 7) continue;
-      }
+    if (valid_config_sgemm(param, large_set)) {
+      if (skip > 0 && lczero::Random::Get().GetInt(0, skip-1) != 0) continue;
       valid_params.emplace_back(i);
     }
   }
@@ -330,7 +358,8 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
 
     auto sum = 0.0f;
     auto max_error = 0.0f;
-    for (auto r = 0; r < kDefaultRuns; r++) {
+    int runs=0;
+    for (int r=0; runs < kAccuracyRuns; r++) {
       try {
         queue.enqueueNDRangeKernel(sgemm_kernel, cl::NullRange, size_sgemm,
                                    local_sgemm, nullptr, &event);
@@ -348,6 +377,10 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
         auto elapsed = event.getProfilingInfo<CL_PROFILING_COMMAND_END>() -
                        event.getProfilingInfo<CL_PROFILING_COMMAND_START>();
 
+        if (r<kIgnoreRuns)
+          continue;
+        
+        runs++;
         sum += elapsed;
       } catch (const cl::Error&) {
         // Failed to enqueue kernel. Set error to max.
@@ -357,9 +390,9 @@ std::string Tuner::tune_sgemm_bruteforce(const int m, const int n, const int k,
     }
     if (max_error < kMaxError && (best_time == 0 || sum < best_time)) {
       auto param_str = parameters_to_string(p);
-      auto kernel_us = 1e-3f * (sum / kDefaultRuns);
+      auto kernel_us = 1e-3f * (sum / runs);
       // Timing is in nanoseconds (10^-9), Giga = 10^9, so this works out.
-      auto kernel_gflops = total_flops / (sum / kDefaultRuns);
+      auto kernel_gflops = total_flops / (sum / runs);
       std::cerr << std::fixed << std::setprecision(1) << "(" << param_counter
                 << "/" << valid_params.size() << ") " << param_str << " "
                 << kernel_us << " us (" << kernel_gflops << " GFLOPS)"
@@ -385,6 +418,31 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
       {"NDIMB", {8, 16, 32}}, {"KWI", {2, 8}},        {"VWM", {1, 2, 4, 8}},
       {"VWN", {1, 2, 4, 8}},  {"STRM", {0, 1}},       {"STRN", {0, 1}},
       {"SA", {0, 1}},         {"SB", {0, 1}}};
+
+  auto seeds = kSeeds;
+  auto walkLength = kWalkLength;
+
+  switch (m_params.tune_effort) {
+    case kTuneEffortFast:
+      seeds = kSeeds / 2;
+      walkLength = kWalkLength / 2;
+      break;
+
+    case kTuneEffortNormal:
+      seeds = kSeeds;
+      walkLength = kWalkLength;
+      break;
+
+    case kTuneEffortSlower:
+      seeds = kSeeds * 2;
+      walkLength = kWalkLength * 2;
+      break;
+
+    case kTuneEffortSlowest:
+      seeds = kSeeds * 4;
+      walkLength = kWalkLength * 4;
+      break;
+  }
 
   // This needs to be at minimum the maximum (MNK/WG) values above.
   auto m_max = std::max(64, m);
@@ -417,13 +475,11 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
   auto cBuffer = cl::Buffer(m_context, CL_MEM_READ_WRITE,
                             sizeof(float) * c_size, nullptr, nullptr);
 
-  std::cerr << "Started OpenCL SGEMM tuner" << std::endl;
-
   size_t cfgs = 1;
   for (auto c = size_t{0}; c < opts.size(); c++) {
     cfgs *= opts[c].second.size();
   }
-  std::cerr << "Total " << cfgs << " configurations" << std::endl;
+  std::cerr << "Stochastic search in " << cfgs << " configurations" << std::endl;
 
   std::string best_params;
   std::string best_string;
@@ -439,7 +495,7 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
   auto k_ceil_prev = 0;
   auto param_counter = size_t{0};
 
-  for (int seed = 0; seed < kSeeds; seed++) {
+  for (int seed = 0; seed < seeds; seed++) {
     int index = lczero::Random::Get().GetInt(0, cfgs);
 
     TuneParameters p = get_parameters_by_int(opts, index);
@@ -449,7 +505,7 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
     double walk_best_time_us = 0;
     double walk_best_gflops = 0;
 
-    for (int steps = 0; steps < kWalkLength; steps++) {
+    for (int steps = 0; steps < walkLength; steps++) {
       TuneParameters p_old = p;
 
       int changes = 0;
@@ -537,7 +593,7 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
       bool error = false;
 
       int runs = 0;
-      while (runs < kAccuracyRuns) {
+      for (int r=0; runs < kAccuracyRuns; r++) {
         try {
           queue.enqueueNDRangeKernel(sgemm_kernel, cl::NullRange, size_sgemm,
                                      local_sgemm, nullptr, &event);
@@ -555,6 +611,9 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
           auto elapsed = event.getProfilingInfo<CL_PROFILING_COMMAND_END>() -
                          event.getProfilingInfo<CL_PROFILING_COMMAND_START>();
 
+          if (r<kIgnoreRuns)
+            continue;
+          
           sum += elapsed;
           runs++;
 
@@ -597,7 +656,7 @@ std::string Tuner::tune_sgemm_stochastic(const int m, const int n, const int k,
     }  // march
 
     std::cerr << std::fixed << std::setprecision(1) << "(" << seed << "/"
-              << kSeeds << ") " << best_string << " " << best_time_us << " us ("
+              << seeds << ") " << best_string << " " << best_time_us << " us ("
               << best_gflops << " GFLOPS)" << std::endl;
 
   }  // seed
